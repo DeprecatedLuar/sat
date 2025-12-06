@@ -31,30 +31,9 @@ try_source() {
         nix)    install_nix "$tool" ;;
         system) install_system "$tool" ;;
         sat)    install_sat "$tool" ;;
-        gh)
-            # Search GitHub for tool, get repo + language
-            local gh_data=$(search_github "$tool" 1)
-            local repo=$(echo "$gh_data" | jq -r '.items[0].full_name // empty')
-            local lang=$(echo "$gh_data" | jq -r '.items[0].language // empty')
-            [[ -z "$repo" ]] && return 1
-            install_from_github "$repo" "$lang"
-            ;;
-        gh-release)
-            # Force GitHub release binary via Huber (requires huber)
-            command -v huber &>/dev/null || { echo "huber required for :rel installs (sat install huber)" >&2; return 1; }
-            local repo=$(search_github "$tool" 1 | jq -r '.items[0].full_name // empty')
-            [[ -z "$repo" ]] && return 1
-            install_github_huber "$repo"
-            ;;
-        gh-script)
-            # Force install.sh from GitHub repo
-            local repo=$(search_github "$tool" 1 | jq -r '.items[0].full_name // empty')
-            [[ -z "$repo" ]] && return 1
-            local tree=$(curl -s "https://api.github.com/repos/$repo/git/trees/main?recursive=1" | jq -r '.tree[].path' 2>/dev/null)
-            [[ -z "$tree" || "$tree" == "null" ]] && \
-                tree=$(curl -s "https://api.github.com/repos/$repo/git/trees/master?recursive=1" | jq -r '.tree[].path' 2>/dev/null)
-            install_github_script "$repo" "$tree"
-            ;;
+        gh)         install_github "$tool" "auto" ;;
+        gh-release) install_github "$tool" "release" ;;
+        gh-script)  install_github "$tool" "script" ;;
         *)
             return 1
             ;;
@@ -119,7 +98,7 @@ sat_install() {
             # Shell session: track in session + master manifest
             pid_manifest_add "$SAT_SESSION" "$tool" "$src"
             master_add "$tool" "$src" "$SAT_SESSION"
-        elif master_has_tool "$tool"; then
+you         elif master_has_tool "$tool"; then
             # Permanent install but tool exists in session: promote it
             master_promote "$tool" "$src"
             printf "  ${C_DIM}(promoted from shell session)${C_RESET}\n"
@@ -139,7 +118,7 @@ sat_install() {
             local REPO_PATH="$PROGRAM"
             local REPO_NAME="${PROGRAM##*/}"
 
-            install_from_github "$REPO_PATH" &
+            install_github "$REPO_PATH" "auto" &
             spin_probe "$REPO_NAME" $!
 
             if wait $! && _gh_get_result; then
