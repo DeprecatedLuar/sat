@@ -9,17 +9,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Architecture
 
 ```
-bin/sat (router + offline commands)
-│   ├── sat_uninstall()    # Local package removal
-│   ├── sat_list()         # Show tracked packages (system + sessions)
-│   ├── sat_scan()         # Scan ecosystem dirs (skips session tools)
-│   └── [ROUTER]           # Routes to library for online commands
-│
-lib/sat/
+sat (router + offline commands)
+├── sat_uninstall()        # Local package removal
+├── sat_list()             # Show tracked packages (system + sessions)
+├── sat_scan()             # Scan ecosystem dirs (skips session tools)
+└── [ROUTER]               # Routes to library for online commands
+
+lib/
 ├── common.sh              # Shared utilities, manifests, cleanup functions
-├── install.sh             # sat_install() - installs + promotes from master
-├── search.sh              # sat_search() - cross-ecosystem search
-└── shell.sh               # sat_shell() - ephemeral environment
+├── install.sh             # sat_install() - orchestrates installation
+├── search.sh              # sat_search() + per-ecosystem search functions
+├── shell.sh               # sat_shell() - ephemeral environment
+└── installation/          # Modular installers (one per package manager)
+    ├── brew.sh            # install_brew()
+    ├── cargo.sh           # install_cargo()
+    ├── github.sh          # install_from_github(), language-based routing
+    ├── go.sh              # install_go()
+    ├── nix.sh             # install_nix()
+    ├── npm.sh             # install_npm()
+    ├── sat.sh             # install_sat()
+    ├── system.sh          # install_system()
+    └── uv.sh              # install_uv()
 ```
 
 ### Binary vs Library Split
@@ -130,9 +140,14 @@ sat install <pkg>              # Install (promotes from master if exists)
 sat install <pkg>:sys          # Force system package manager
 sat install <pkg>:brew         # Force homebrew
 sat install <pkg>:nix          # Force nix
-sat install <pkg>:rs           # Force cargo
-sat install <pkg>:py           # Force uv/python
-sat install <pkg>:js           # Force npm
+sat install <pkg>:rs           # Force cargo (alias: :rust)
+sat install <pkg>:py           # Force uv/python (alias: :python)
+sat install <pkg>:js           # Force npm (alias: :node)
+sat install <pkg>:go           # Force go install
+sat install <pkg>:gh           # Force GitHub search + install
+sat install <pkg>:rel          # Force GitHub release binary (alias: :release)
+sat install <pkg>:sh           # Force GitHub install.sh script (alias: :script)
+sat install owner/repo         # Direct GitHub repo install
 
 sat shell <pkg>[:source] ...   # Ephemeral shell with tools
 sat uninstall <pkg>            # Remove and update manifest
@@ -140,6 +155,11 @@ sat list                       # Show sessions + system tools
 sat scan                       # Scan ecosystems, skip session tools
 sat which <pkg>                # Show all installations across sources
 sat info <pkg>                 # Detailed info (source, path, version)
+sat track <pkg>                # Add existing program to manifest
+sat untrack <pkg>              # Remove from manifest without uninstalling
+sat source <pm>                # Install a package manager (huber, cargo, brew, nix)
+sat search <pkg>               # Cross-ecosystem package search
+sat search <pkg>:gh            # Search specific source (gh, cargo, npm, etc.)
 ```
 
 ## Testing
@@ -176,3 +196,26 @@ sat which ripgrep                     # Still installed (system manifest)
 - `jq` - JSON parsing for API responses
 - `curl` - HTTP requests
 - Optional: cargo, uv, npm, go, brew, nix for respective sources
+
+Run `sat deps` to install core dependencies.
+
+## Remote Sourcing
+
+The tool sources scripts from a remote repository for OS detection and bootstrapping:
+- `SAT_BASE=https://raw.githubusercontent.com/DeprecatedLuar/the-satellite/main`
+- `internal/os_detection.sh` - OS/distro detection (sourced in common.sh)
+- `internal/fetcher.sh` - Sat wrapper installer
+- `cargo-bay/programs/*.sh` - Sat wrapper scripts
+
+## GitHub Install Methods
+
+When installing from GitHub (`sat install owner/repo` or `<pkg>:gh`):
+
+1. **Search** returns repo + language from GitHub API
+2. **Huber** tried first (prebuilt release binaries)
+3. **Language-based routing** if Huber fails:
+   - `Go` → `go install`
+   - `Python` → `uv tool install`
+4. **Script** fallback - run install.sh if present
+
+Search functions in `search.sh` are reused by both `sat search` and install.

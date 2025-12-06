@@ -57,6 +57,7 @@ SAT_DATA="$HOME/.local/share/sat"
 SAT_MANIFEST="${SAT_MANIFEST:-$SAT_DATA/manifest}"
 SAT_SHELL_DIR="$SAT_DATA/shell"
 SAT_SHELL_MASTER="$SAT_SHELL_DIR/manifest"
+SAT_INSTALL_DIR="${SAT_LIB:-$(dirname "${BASH_SOURCE[0]}")}/installation"
 
 # Ensure data dirs exist
 mkdir -p "$SAT_DATA" "$SAT_SHELL_DIR"
