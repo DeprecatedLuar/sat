@@ -4,6 +4,16 @@
 # Temp file for subshell communication
 _GH_RESULT_FILE="/tmp/sat-gh-result-$$"
 
+# Fetch repo tree structure (tries main, then master)
+_fetch_tree() {
+    local repo="$1"
+    local tree
+    tree=$(curl -s "https://api.github.com/repos/$repo/git/trees/main?recursive=1" | jq -r '.tree[].path' 2>/dev/null)
+    [[ -z "$tree" || "$tree" == "null" ]] && \
+        tree=$(curl -s "https://api.github.com/repos/$repo/git/trees/master?recursive=1" | jq -r '.tree[].path' 2>/dev/null)
+    echo "$tree"
+}
+
 # Write result to temp file (for subshell communication)
 _gh_set_result() {
     local bin="$1" src="$2"
@@ -125,37 +135,53 @@ install_github_script() {
 # GITHUB INSTALLATION - ORCHESTRATOR
 # =============================================================================
 
-# Install from GitHub repo - routes by language
-# Args: repo_path (owner/repo), language (optional, from search)
+# Install from GitHub - unified entry point
+# Args: input (tool name or owner/repo), method (auto|release|script)
 # Sets: _GH_INSTALLED_BIN, _GH_INSTALL_SOURCE (via temp file)
 # Returns: 0 on success, 1 on failure
-install_from_github() {
-    local repo_path="$1"
-    local language="$2"
-    local repo_name="${repo_path##*/}"
+install_github() {
+    local input="$1"
+    local method="${2:-auto}"
+
+    local repo lang tree
 
     # Clean any stale result file
     rm -f "$_GH_RESULT_FILE"
 
-    # Fetch repo structure once
-    local tree
-    tree=$(curl -s "https://api.github.com/repos/$repo_path/git/trees/main?recursive=1" | jq -r '.tree[].path' 2>/dev/null)
-    [[ -z "$tree" || "$tree" == "null" ]] && \
-        tree=$(curl -s "https://api.github.com/repos/$repo_path/git/trees/master?recursive=1" | jq -r '.tree[].path' 2>/dev/null)
+    # Handle direct repo path vs search
+    if [[ "$input" == */* ]]; then
+        repo="$input"
+    else
+        local gh_data=$(search_github "$input" 1)
+        repo=$(echo "$gh_data" | jq -r '.items[0].full_name // empty')
+        lang=$(echo "$gh_data" | jq -r '.items[0].language // empty')
+        [[ -z "$repo" ]] && return 1
+    fi
 
+    # Fetch tree (needed for script and language detection)
+    tree=$(_fetch_tree "$repo")
     [[ -z "$tree" || "$tree" == "null" ]] && return 1
 
-    # 1. Always try huber first (release binaries)
-    install_github_huber "$repo_path" && return 0
-
-    # 2. If huber fails, try language-specific install
-    case "$language" in
-        Go)     install_github_go "$repo_path" "$tree" && return 0 ;;
-        Python) install_github_python "$repo_path" "$tree" && return 0 ;;
+    case "$method" in
+        auto)
+            # Full fallback: huber → language → script
+            install_github_huber "$repo" && return 0
+            case "$lang" in
+                Go)     install_github_go "$repo" "$tree" && return 0 ;;
+                Python) install_github_python "$repo" "$tree" && return 0 ;;
+            esac
+            install_github_script "$repo" "$tree" && return 0
+            return 1
+            ;;
+        release)
+            command -v huber &>/dev/null || { echo "huber required for :rel installs (sat source huber)" >&2; return 1; }
+            install_github_huber "$repo"
+            ;;
+        script)
+            install_github_script "$repo" "$tree"
+            ;;
+        *)
+            return 1
+            ;;
     esac
-
-    # 3. Last resort: install.sh
-    install_github_script "$repo_path" "$tree" && return 0
-
-    return 1
 }
