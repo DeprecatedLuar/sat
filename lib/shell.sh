@@ -74,6 +74,12 @@ shell_cleanup() {
     done
 
     if [[ ${#to_remove[@]} -gt 0 ]]; then
+        # Set XDG vars so tools like uv can find their session installs
+        export XDG_CONFIG_HOME="$xdg_dir/config"
+        export XDG_DATA_HOME="$xdg_dir/data"
+        export XDG_CACHE_HOME="$xdg_dir/cache"
+        export XDG_STATE_HOME="$xdg_dir/state"
+
         for tool in "${to_remove[@]}"; do
             local src="${session_sources[$tool]}"
             local display=$(source_display "$src")
@@ -142,23 +148,6 @@ sat_shell() {
 
     take_snapshot "$snapshot_before"
 
-    local to_install=()
-    local already_have=()
-
-    for spec in "${specs[@]}"; do
-        parse_tool_spec "$spec"
-        local tool="$_TOOL_NAME"
-        local forced_src="$_TOOL_SOURCE"
-
-        if [[ -z "$forced_src" ]] && command -v "$tool" &>/dev/null; then
-            already_have+=("$spec")
-        else
-            to_install+=("$spec")
-        fi
-    done
-
-    local to_install_str="${to_install[*]}"
-    local already_have_str="${already_have[*]}"
     local all_specs_str="${specs[*]}"
 
     local rcfile="$session_dir/rcfile"
@@ -170,25 +159,24 @@ RCFILE_START
 export PS1="(sat) \$PS1"
 export HISTFILE="$xdg_dir/history"
 export SAT_SESSION="$$"
+export SAT_MANIFEST_TARGET="session"
 
 export XDG_CONFIG_HOME="$xdg_dir/config"
 export XDG_DATA_HOME="$xdg_dir/data"
 export XDG_CACHE_HOME="$xdg_dir/cache"
 export XDG_STATE_HOME="$xdg_dir/state"
+export PATH="$xdg_dir/bin:\$PATH"
 
-SAT_SESSION_MANIFEST="$manifest"
-SAT_SHELL_MASTER="$SAT_SHELL_MASTER"
 SAT_LIB="$SAT_LIB"
-
-SAT_TO_INSTALL=($to_install_str)
-SAT_ALREADY_HAVE=($already_have_str)
-SAT_ALL_SPECS=($all_specs_str)
+SAT_SPECS=($all_specs_str)
 RCFILE_VARS
 
     cat >> "$rcfile" << 'RCFILE_MAIN'
 
 source "$SAT_LIB/common.sh"
+source "$SAT_LIB/install.sh"
 
+# Use shell install order (isolated sources first)
 INSTALL_ORDER=("${SHELL_INSTALL_ORDER[@]}")
 
 clear
@@ -198,75 +186,10 @@ pad=$(printf '─%.0s' $(seq 1 $((cols - ${#header}))))
 echo -e "\033[1m${header}${pad}\033[0m"
 echo ""
 
-for spec in "${SAT_ALREADY_HAVE[@]}"; do
-    parse_tool_spec "$spec"
-    tool="$_TOOL_NAME"
-    src=$(resolve_source "$tool" "")
-    display=$(source_display "$src")
-    light=$(source_light "$src")
-    color=$(source_color "$display")
-    printf "[${C_CHECK}] ${light}%-20s${C_RESET} [${color}%s${C_RESET}] ${C_DIM}(already installed)${C_RESET}\n" "$tool" "$display"
-done
+# Install tools (SAT_MANIFEST_TARGET routes to session manifest)
+sat_install "${SAT_SPECS[@]}"
 
-if [[ ${#SAT_TO_INSTALL[@]} -gt 0 ]]; then
-    total=${#SAT_TO_INSTALL[@]}
-
-    for spec in "${SAT_TO_INSTALL[@]}"; do
-        parse_tool_spec "$spec"
-        printf "[ ] %s\n" "$_TOOL_NAME"
-    done
-
-    printf "\033[%dA" "$total"
-
-    for spec in "${SAT_TO_INSTALL[@]}"; do
-        parse_tool_spec "$spec"
-        tool="$_TOOL_NAME"
-        forced_src="$_TOOL_SOURCE"
-
-        if [[ -n "$forced_src" ]]; then
-            try_source "$tool" "$forced_src" &
-            spin_probe "$tool" $!
-            if wait $!; then
-                _INSTALL_SOURCE="$forced_src"
-                installed=true
-            else
-                installed=false
-            fi
-        else
-            installed=false
-            install_with_fallback "$tool" && installed=true
-        fi
-
-        if $installed; then
-            display=$(source_display "$_INSTALL_SOURCE")
-            light=$(source_light "$_INSTALL_SOURCE")
-            color=$(source_color "$display")
-            printf "\r[${C_CHECK}] ${light}%-20s${C_RESET} [${color}%s${C_RESET}]\n" "$tool" "$display"
-            pid_manifest_add "$SAT_SESSION" "$tool" "$_INSTALL_SOURCE"
-            master_add "$tool" "$_INSTALL_SOURCE" "$SAT_SESSION"
-        else
-            printf "\r[${C_CROSS}] %-20s\n" "$tool"
-        fi
-    done
-
-    # Track dependencies that got installed
-    for spec in "${SAT_TO_INSTALL[@]}"; do
-        parse_tool_spec "$spec"
-        tool="$_TOOL_NAME"
-        if command -v "$tool" &>/dev/null && ! grep -q "^TOOL=$tool$" "$SAT_SESSION_MANIFEST" 2>/dev/null; then
-            src=$(resolve_source "$tool" "")
-            [[ -z "$src" || "$src" == "unknown" ]] && continue
-            display=$(source_display "$src")
-            light=$(source_light "$src")
-            color=$(source_color "$display")
-            printf "[${C_CHECK}] ${light}%-20s${C_RESET} [${color}%s${C_RESET}] (dep)\n" "$tool" "$display"
-            pid_manifest_add "$SAT_SESSION" "$tool" "$src"
-            master_add "$tool" "$src" "$SAT_SESSION"
-        fi
-    done
-    echo ""
-fi
-
+echo ""
 echo "type 'exit' to leave"
 echo ""
 RCFILE_MAIN
