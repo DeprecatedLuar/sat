@@ -242,8 +242,7 @@ if [[ ${#SAT_TO_INSTALL[@]} -gt 0 ]]; then
             light=$(source_light "$_INSTALL_SOURCE")
             color=$(source_color "$display")
             printf "\r[${C_CHECK}] ${light}%-20s${C_RESET} [${color}%s${C_RESET}]\n" "$tool" "$display"
-            echo "TOOL=$tool" >> "$SAT_SESSION_MANIFEST"
-            echo "SOURCE_$tool=$_INSTALL_SOURCE" >> "$SAT_SESSION_MANIFEST"
+            pid_manifest_add "$SAT_SESSION" "$tool" "$_INSTALL_SOURCE"
             master_add "$tool" "$_INSTALL_SOURCE" "$SAT_SESSION"
         else
             printf "\r[${C_CROSS}] %-20s\n" "$tool"
@@ -261,8 +260,7 @@ if [[ ${#SAT_TO_INSTALL[@]} -gt 0 ]]; then
             light=$(source_light "$src")
             color=$(source_color "$display")
             printf "[${C_CHECK}] ${light}%-20s${C_RESET} [${color}%s${C_RESET}] (dep)\n" "$tool" "$display"
-            echo "TOOL=$tool" >> "$SAT_SESSION_MANIFEST"
-            echo "SOURCE_$tool=$src" >> "$SAT_SESSION_MANIFEST"
+            pid_manifest_add "$SAT_SESSION" "$tool" "$src"
             master_add "$tool" "$src" "$SAT_SESSION"
         fi
     done
