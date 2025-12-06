@@ -18,8 +18,10 @@ sat (router + offline commands)
 lib/
 ├── common.sh              # Shared utilities, manifests, cleanup functions
 ├── install.sh             # sat_install() - orchestrates installation
+│   └── _track_install()   # Routes manifest writes based on SAT_MANIFEST_TARGET
 ├── search.sh              # sat_search() + per-ecosystem search functions
-├── shell.sh               # sat_shell() - ephemeral environment
+├── shell.sh               # sat_shell() - thin wrapper around sat_install
+│   └── shell_cleanup()    # Cleanup on session exit
 └── installation/          # Modular installers (one per package manager)
     ├── brew.sh            # install_brew()
     ├── cargo.sh           # install_cargo()
@@ -31,6 +33,12 @@ lib/
     ├── system.sh          # install_system()
     └── uv.sh              # install_uv()
 ```
+
+### Shell as Thin Wrapper
+Shell delegates installation to `sat_install`, only handling:
+- **Isolation**: tmux session, XDG overrides, session directories
+- **Context**: Sets `SAT_MANIFEST_TARGET=session` for manifest routing
+- **Cleanup**: Removes tools and configs on exit
 
 ### Binary vs Library Split
 - **Binary**: Offline-capable commands (list, scan, uninstall, track, which, info)
@@ -83,13 +91,25 @@ Shell installs (isolated-first):
 
 ## Session Lifecycle
 
+Shell is a thin wrapper around `sat_install`. It handles isolation and cleanup, delegating all installation logic to the existing system.
+
+### Manifest Routing via Environment Variable
+
+The `SAT_MANIFEST_TARGET` env var controls where `_track_install()` writes:
+- **Unset** (default): System manifest (permanent installs)
+- **`session`**: Session + master manifest (temporary, cleaned on exit)
+
+Shell sets `SAT_MANIFEST_TARGET=session` before calling `sat_install`, so the same installation logic routes to different manifests based on context.
+
 ### Starting a shell
 1. Check for tmux
 2. Cache sudo if any `:sys` tools requested
 3. Create session dir + XDG temp
 4. Take config snapshot
-5. Spawn tmux with rcfile that installs tools
-6. Tools written to session manifest + master manifest
+5. Spawn tmux with rcfile that:
+   - Sets `SAT_MANIFEST_TARGET=session` and `SAT_SESSION=$$`
+   - Calls `sat_install` for requested tools
+6. Tools written to session manifest + master manifest (via env var routing)
 
 ### Clean exit (`exit`)
 1. `shell_cleanup()` runs in shell.sh
@@ -167,6 +187,14 @@ The library (`lib/*.sh`) is designed to eventually be hosted remotely and execut
 This architecture is already in place — the wrappers automatically fall back to the API when `_*` functions aren't available.
 
 ## Key Functions
+
+### Installation (install.sh)
+```bash
+try_source()            # Try installing from specific source
+install_with_fallback() # Try sources in INSTALL_ORDER until one works
+sat_install()           # Main install entry point
+_track_install()        # Routes to system or session manifest based on SAT_MANIFEST_TARGET
+```
 
 ### Manifest helpers (common.sh wrappers)
 ```bash

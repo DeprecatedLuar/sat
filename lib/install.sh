@@ -69,7 +69,7 @@ install_with_fallback() {
     _INSTALL_SOURCE=""
 
     for source in "${INSTALL_ORDER[@]}"; do
-        try_source "$tool" "$source" &
+        try_source "$tool" "$source" >/dev/null 2>&1 &
         spin_with_style "$tool" $! "$source"
         if wait $!; then
             # For gh: get result from temp file
@@ -109,13 +109,22 @@ sat_install() {
         esac
     done
 
-    # Helper: add to system manifest (promotes from master if exists there)
+    # Helper: route manifest writes based on context
+    # SAT_MANIFEST_TARGET=session → session + master manifest (temporary)
+    # SAT_MANIFEST_TARGET unset   → system manifest (permanent)
     _track_install() {
         local tool="$1" src="$2"
-        if master_has_tool "$tool"; then
+
+        if [[ "$SAT_MANIFEST_TARGET" == "session" ]]; then
+            # Shell session: track in session + master manifest
+            pid_manifest_add "$SAT_SESSION" "$tool" "$src"
+            master_add "$tool" "$src" "$SAT_SESSION"
+        elif master_has_tool "$tool"; then
+            # Permanent install but tool exists in session: promote it
             master_promote "$tool" "$src"
             printf "  ${C_DIM}(promoted from shell session)${C_RESET}\n"
         else
+            # Permanent install: system manifest
             manifest_add "$tool" "$src"
         fi
     }
@@ -177,7 +186,7 @@ sat_install() {
             fi
 
             # Other sources - background with spinner
-            try_source "$PROGRAM" "$FORCE_SOURCE" &
+            try_source "$PROGRAM" "$FORCE_SOURCE" >/dev/null 2>&1 &
             spin_with_style "$PROGRAM" $! "$FORCE_SOURCE"
             if wait $!; then
                 local src="$FORCE_SOURCE"

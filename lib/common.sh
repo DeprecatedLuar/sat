@@ -367,7 +367,12 @@ pkg_remove() {
         pacman)  sudo pacman -Rs --noconfirm "$pkg" ;;
         dnf)     sudo dnf remove -y "$pkg" ;;
         pkg)     pkg uninstall -y "$pkg" ;;
-        uv|uv:*|gh)  uv tool uninstall "$pkg" ;;
+        uv|uv:*)
+            # Binary name may differ from package name - look it up
+            # uv tool list format: "package-name vX.X.X\n- binary1\n- binary2"
+            local uv_pkg=$(uv tool list 2>/dev/null | grep -B1 "^- $pkg\$" | head -1 | cut -d' ' -f1)
+            uv tool uninstall "${uv_pkg:-$pkg}"
+            ;;
         cargo)
             # Binary name may differ from crate name - look it up
             crate=$(cargo install --list 2>/dev/null | grep -B1 "^    $pkg\$" | head -1 | cut -d' ' -f1)
@@ -507,6 +512,12 @@ session_remove_tool() {
         master_remove "$tool" "$src" "$pid"
         return 0
     else
+        # Uninstall failed - if tool is already gone, clean manifest anyway
+        if ! command -v "$tool" &>/dev/null; then
+            printf "  ${C_DIM}- %-18s (already gone)${C_RESET}\n" "$tool"
+            master_remove "$tool" "$src" "$pid"
+            return 0
+        fi
         printf "  ${C_CROSS} %-18s [${color}%s${C_RESET}] %s\n" "$tool" "$display" "$err"
         return 1
     fi
