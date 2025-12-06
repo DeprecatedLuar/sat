@@ -1,12 +1,47 @@
 #!/usr/bin/env bash
 # sat - Satellite installer (universal package manager)
 
-SAT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SAT_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 SAT_LIB="$SAT_ROOT/lib"
 
 source "$SAT_LIB/common.sh"
 
-cleanup_orphaned_sessions
+# ══════════════════════════════════════════════════════════════════════════════
+# ──[MANIFEST FUNCTIONS]────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Internal functions for manifest manipulation. Used by the API.
+
+# sat-manifest (system manifest: tool=source)
+_sat_manifest_add()    { sed -i "/^$1=/d" "$SAT_MANIFEST" 2>/dev/null; echo "$1=$2" >> "$SAT_MANIFEST"; }
+_sat_manifest_get()    { grep "^$1=" "$SAT_MANIFEST" 2>/dev/null | cut -d= -f2; }
+_sat_manifest_remove() { sed -i "/^$1=/d" "$SAT_MANIFEST"; }
+_sat_manifest_has()    { grep -q "^$1=" "$SAT_MANIFEST" 2>/dev/null; }
+
+# shell-manifest (master manifest: tool:source:pid)
+_shell_manifest_add()        { echo "$1:$2:$3" >> "$SAT_SHELL_MASTER"; }
+_shell_manifest_pids()       { grep "^$1:$2:" "$SAT_SHELL_MASTER" 2>/dev/null | cut -d: -f3; }
+_shell_manifest_has()        { grep -q "^$1:" "$SAT_SHELL_MASTER" 2>/dev/null; }
+_shell_manifest_remove()     { sed -i "\|^$1:$2:$3\$|d" "$SAT_SHELL_MASTER"; }
+_shell_manifest_remove_all() { sed -i "\|^$1:|d" "$SAT_SHELL_MASTER"; }
+_shell_manifest_promote() {
+    local tool="$1" src="$2"
+    sed -i "\|^${tool}:${src}:|d" "$SAT_SHELL_MASTER"
+    _sat_manifest_has "$tool" || _sat_manifest_add "$tool" "$src"
+}
+
+# pid-manifest (session manifest: TOOL=x, SOURCE_x=y)
+_pid_manifest_add() {
+    local pid="$1" tool="$2" src="$3"
+    mkdir -p "$SAT_SHELL_DIR/$pid"
+    echo "TOOL=$tool" >> "$SAT_SHELL_DIR/$pid/manifest"
+    echo "SOURCE_$tool=$src" >> "$SAT_SHELL_DIR/$pid/manifest"
+}
+_pid_manifest_tools()  { [[ -f "$SAT_SHELL_DIR/$1/manifest" ]] && grep "^TOOL=" "$SAT_SHELL_DIR/$1/manifest" | cut -d= -f2; }
+_pid_manifest_source() { [[ -f "$SAT_SHELL_DIR/$1/manifest" ]] && grep "^SOURCE_$2=" "$SAT_SHELL_DIR/$1/manifest" | cut -d= -f2; }
+_pid_manifest_remove() { rm -rf "$SAT_SHELL_DIR/$1" "/tmp/sat-$1" 2>/dev/null; }
+
+# Skip cleanup for internal API calls (prevents recursion)
+[[ "$1" != "internal" ]] && cleanup_orphaned_sessions
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ──[UNINSTALL]─────────────────────────────────────────────────────────────────
@@ -14,7 +49,7 @@ cleanup_orphaned_sessions
 
 sat_uninstall() {
     for PROGRAM in "$@"; do
-        SOURCE=$(manifest_get "$PROGRAM")
+        SOURCE=$(_sat_manifest_get "$PROGRAM")
         TRACKED=true
         BINARY="$PROGRAM"
 
@@ -42,7 +77,7 @@ sat_uninstall() {
 
         printf "Removing %s\n" "$BINARY"
         if pkg_remove "$BINARY" "$SOURCE"; then
-            [[ "$TRACKED" == true ]] && manifest_remove "$BINARY"
+            [[ "$TRACKED" == true ]] && _sat_manifest_remove "$BINARY"
             status_ok "$BINARY removed" "$SOURCE"
         else
             status_fail "$BINARY removal failed"
@@ -147,7 +182,7 @@ sat_list() {
             echo ""
             echo "Cleaning ${#stale[@]} stale entries..."
             for prog in "${stale[@]}"; do
-                manifest_remove "$prog"
+                _sat_manifest_remove "$prog"
             done
         fi
         has_content=true
@@ -222,7 +257,7 @@ sat_scan() {
             echo "$brew_leaves" | grep -qxF "$prog" || should_prune=true
         fi
         if $should_prune; then
-            manifest_remove "$prog"
+            _sat_manifest_remove "$prog"
             printf "  ${C_DIM}- %-20s (excluded)${C_RESET}\n" "$prog"
             ((pruned++))
         fi
@@ -238,9 +273,9 @@ sat_scan() {
                 [[ ! -x "$bin" ]] && continue
                 prog=$(basename "$bin")
                 is_excluded "$prog" "$src" && continue
-                [[ -n "$(manifest_get "$prog")" ]] && continue
-                master_has_tool "$prog" && continue
-                manifest_add "$prog" "$src"
+                [[ -n "$(_sat_manifest_get "$prog")" ]] && continue
+                _shell_manifest_has "$prog" && continue
+                _sat_manifest_add "$prog" "$src"
                 display=$(source_display "$src")
                 color=$(source_color "$display")
                 printf "  ${color}+${C_RESET} %-20s [${color}%s${C_RESET}]\n" "$prog" "$display"
@@ -258,9 +293,9 @@ sat_scan() {
                 [[ -z "$bin" ]] && continue
                 prog=$(basename "$bin")
                 is_excluded "$prog" "brew" && continue
-                [[ -n "$(manifest_get "$prog")" ]] && continue
-                master_has_tool "$prog" && continue
-                manifest_add "$prog" "brew"
+                [[ -n "$(_sat_manifest_get "$prog")" ]] && continue
+                _shell_manifest_has "$prog" && continue
+                _sat_manifest_add "$prog" "brew"
                 printf "  ${C_BREW}+${C_RESET} %-20s [${C_BREW}brew${C_RESET}]\n" "$prog"
                 ((added++))
             done < <(brew list "$formula" 2>/dev/null | grep '/bin/')
@@ -273,9 +308,9 @@ sat_scan() {
             [[ ! -x "$bin" ]] && continue
             prog=$(basename "$bin")
             is_excluded "$prog" "nix" && continue
-            [[ -n "$(manifest_get "$prog")" ]] && continue
-            master_has_tool "$prog" && continue
-            manifest_add "$prog" "nix"
+            [[ -n "$(_sat_manifest_get "$prog")" ]] && continue
+            _shell_manifest_has "$prog" && continue
+            _sat_manifest_add "$prog" "nix"
             printf "  ${C_NIX}+${C_RESET} %-20s [${C_NIX}nix${C_RESET}]\n" "$prog"
             ((added++))
         done
@@ -287,10 +322,10 @@ sat_scan() {
             [[ ! -x "$bin" ]] && continue
             prog=$(basename "$bin")
             is_excluded "$prog" "repo" && continue
-            [[ -n "$(manifest_get "$prog")" ]] && continue
-            master_has_tool "$prog" && continue
+            [[ -n "$(_sat_manifest_get "$prog")" ]] && continue
+            _shell_manifest_has "$prog" && continue
             if is_from_repo "$bin"; then
-                manifest_add "$prog" "repo"
+                _sat_manifest_add "$prog" "repo"
                 printf "  ${C_REPO}+${C_RESET} %-20s [${C_REPO}repo${C_RESET}]\n" "$prog"
                 ((added++))
             fi
@@ -325,7 +360,7 @@ case "$1" in
         ;;
 
     install|i)
-        [[ -z "$2" ]] && { echo "Usage: sat install <program> [--rust|--python|--node|--go|--system]"; exit 1; }
+        # [[ -z "$2" ]] && { echo "Usage: sat install <program> [--rust|--python|--node|--go|--system]"; exit 1; }
         shift
         source "$SAT_LIB/install.sh"
         sat_install "$@"
@@ -358,7 +393,7 @@ case "$1" in
         [[ -z "$2" ]] && { echo "Usage: sat track <program> [program2] ..."; exit 1; }
         shift
         for prog in "$@"; do
-            if [[ -n "$(manifest_get "$prog")" ]]; then
+            if [[ -n "$(_sat_manifest_get "$prog")" ]]; then
                 echo "$prog: already tracked"
                 continue
             fi
@@ -369,7 +404,7 @@ case "$1" in
             fi
             src=$(detect_source "$prog")
             [[ -z "$src" || "$src" == "unknown" ]] && { echo "$prog: unknown source, skipping"; continue; }
-            manifest_add "$prog" "$src"
+            _sat_manifest_add "$prog" "$src"
             display=$(source_display "$src")
             color=$(source_color "$display")
             printf "%-20s [${color}%s${C_RESET}] tracked\n" "$prog" "$display"
@@ -384,11 +419,11 @@ case "$1" in
         [[ -z "$2" ]] && { echo "Usage: sat untrack <program> [program2] ..."; exit 1; }
         shift
         for prog in "$@"; do
-            if [[ -z "$(manifest_get "$prog")" ]]; then
+            if [[ -z "$(_sat_manifest_get "$prog")" ]]; then
                 echo "$prog: not tracked"
                 continue
             fi
-            manifest_remove "$prog"
+            _sat_manifest_remove "$prog"
             echo "$prog: untracked"
         done
         ;;
@@ -427,7 +462,7 @@ case "$1" in
             src=$(resolve_source "$prog" "")
             display=$(source_display "$src")
             color=$(source_color "$display")
-            tracked=$(manifest_get "$prog")
+            tracked=$(_sat_manifest_get "$prog")
             ver=$("$prog" --version 2>/dev/null | head -1 || echo "unknown")
 
             light=$(source_light "$src")
@@ -454,7 +489,101 @@ case "$1" in
         done
         ;;
 
-    *)
+    # ══════════════════════════════════════════════════════════════════════════════
+    # ──[INTERNAL API]──────────────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════════════
+    internal)
+        case "$2" in
+            sat-manifest)
+                case "$3" in
+                    add)
+                        [[ -z "$4" || -z "$5" ]] && { echo "Usage: sat internal sat-manifest add <tool> <source>"; exit 1; }
+                        _sat_manifest_add "$4" "$5"
+                        ;;
+                    get)
+                        [[ -z "$4" ]] && { echo "Usage: sat internal sat-manifest get <tool>"; exit 1; }
+                        _sat_manifest_get "$4"
+                        ;;
+                    remove)
+                        [[ -z "$4" ]] && { echo "Usage: sat internal sat-manifest remove <tool>"; exit 1; }
+                        _sat_manifest_remove "$4"
+                        ;;
+                    has)
+                        [[ -z "$4" ]] && { echo "Usage: sat internal sat-manifest has <tool>"; exit 1; }
+                        _sat_manifest_has "$4"
+                        ;;
+                    list)
+                        [[ -f "$SAT_MANIFEST" ]] && cat "$SAT_MANIFEST"
+                        ;;
+                    *)
+                        echo "Usage: sat internal sat-manifest <add|get|remove|has|list> [args]"; exit 1
+                        ;;
+                esac
+                ;;
+            shell-manifest)
+                case "$3" in
+                    add)
+                        [[ -z "$4" || -z "$5" || -z "$6" ]] && { echo "Usage: sat internal shell-manifest add <tool> <source> <pid>"; exit 1; }
+                        _shell_manifest_add "$4" "$5" "$6"
+                        ;;
+                    pids)
+                        [[ -z "$4" || -z "$5" ]] && { echo "Usage: sat internal shell-manifest pids <tool> <source>"; exit 1; }
+                        _shell_manifest_pids "$4" "$5"
+                        ;;
+                    has)
+                        [[ -z "$4" ]] && { echo "Usage: sat internal shell-manifest has <tool>"; exit 1; }
+                        _shell_manifest_has "$4"
+                        ;;
+                    remove)
+                        [[ -z "$4" || -z "$5" || -z "$6" ]] && { echo "Usage: sat internal shell-manifest remove <tool> <source> <pid>"; exit 1; }
+                        _shell_manifest_remove "$4" "$5" "$6"
+                        ;;
+                    remove-all)
+                        [[ -z "$4" ]] && { echo "Usage: sat internal shell-manifest remove-all <tool>"; exit 1; }
+                        _shell_manifest_remove_all "$4"
+                        ;;
+                    promote)
+                        [[ -z "$4" || -z "$5" ]] && { echo "Usage: sat internal shell-manifest promote <tool> <source>"; exit 1; }
+                        _shell_manifest_promote "$4" "$5"
+                        ;;
+                    list)
+                        [[ -f "$SAT_SHELL_MASTER" ]] && cat "$SAT_SHELL_MASTER"
+                        ;;
+                    *)
+                        echo "Usage: sat internal shell-manifest <add|pids|has|remove|remove-all|promote|list> [args]"; exit 1
+                        ;;
+                esac
+                ;;
+            pid-manifest)
+                case "$3" in
+                    add)
+                        [[ -z "$4" || -z "$5" || -z "$6" ]] && { echo "Usage: sat internal pid-manifest add <pid> <tool> <source>"; exit 1; }
+                        _pid_manifest_add "$4" "$5" "$6"
+                        ;;
+                    tools)
+                        [[ -z "$4" ]] && { echo "Usage: sat internal pid-manifest tools <pid>"; exit 1; }
+                        _pid_manifest_tools "$4"
+                        ;;
+                    source)
+                        [[ -z "$4" || -z "$5" ]] && { echo "Usage: sat internal pid-manifest source <pid> <tool>"; exit 1; }
+                        _pid_manifest_source "$4" "$5"
+                        ;;
+                    remove)
+                        [[ -z "$4" ]] && { echo "Usage: sat internal pid-manifest remove <pid>"; exit 1; }
+                        _pid_manifest_remove "$4"
+                        ;;
+                    *)
+                        echo "Usage: sat internal pid-manifest <add|tools|source|remove> [args]"; exit 1
+                        ;;
+                esac
+                ;;
+            *)
+                echo "Usage: sat internal <sat-manifest|shell-manifest|pid-manifest> <operation> [args]"; exit 1
+                ;;
+        esac
+        ;;
+
+    help|--help|-h|"")
         cat << 'EOF'
          ,-.
         / \  `.  __..-,O
@@ -501,5 +630,10 @@ Examples:
   sat install fd:rs bat:rs ripgrep:rs
   sat shell hyperfine:brew cowsay:sys jq
 EOF
+        ;;
+
+    *)
+        echo "sat: unknown command '$1'" >&2
+        exit 1
         ;;
 esac

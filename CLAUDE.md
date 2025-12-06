@@ -104,20 +104,89 @@ Shell installs (isolated-first):
 3. Cache sudo if system packages need removal
 4. For each dead PID: `cleanup_session()` handles everything
 
+## Internal Manifest API
+
+The binary exposes an internal API for manifest manipulation. This API is used by lib files when they run remotely (e.g., inside tmux sessions) and ensures all manifest operations go through a single source of truth.
+
+**Important**: This API is internal/undocumented for users. Lib files call it via wrappers in common.sh.
+
+### API Commands
+
+```bash
+# sat-manifest (system manifest: ~/.local/share/sat/manifest)
+sat internal sat-manifest add <tool> <source>     # Add/update entry
+sat internal sat-manifest get <tool>              # Get source (stdout)
+sat internal sat-manifest remove <tool>           # Remove entry
+sat internal sat-manifest has <tool>              # Exit 0 if exists
+sat internal sat-manifest list                    # Dump all entries
+
+# shell-manifest (master manifest: ~/.local/share/sat/shell/manifest)
+sat internal shell-manifest add <tool> <source> <pid>   # Add session entry
+sat internal shell-manifest pids <tool> <source>        # Get PIDs for tool:source
+sat internal shell-manifest has <tool>                  # Exit 0 if tool exists
+sat internal shell-manifest remove <tool> <source> <pid> # Remove specific entry
+sat internal shell-manifest remove-all <tool>           # Remove all entries for tool
+sat internal shell-manifest promote <tool> <source>     # Move to system manifest
+sat internal shell-manifest list                        # Dump all entries
+
+# pid-manifest (session manifest: ~/.local/share/sat/shell/$PID/manifest)
+sat internal pid-manifest add <pid> <tool> <source>   # Add tool to session
+sat internal pid-manifest tools <pid>                  # List tools in session
+sat internal pid-manifest source <pid> <tool>          # Get source for tool
+sat internal pid-manifest remove <pid>                 # Delete session folder
+```
+
+### Architecture
+
+```
+Binary (sat)
+├── _sat_manifest_*()      # Internal functions (fast, in-process)
+├── _shell_manifest_*()
+├── _pid_manifest_*()
+└── internal)              # CLI API entry point
+
+common.sh (wrappers)
+├── manifest_*()           # Check for _* functions, else call API
+├── master_*()
+└── pid_manifest_*()
+
+lib/*.sh
+└── Call wrapper functions (works both in binary context and remote)
+```
+
+When binary runs: wrappers detect `_*` functions exist → use directly (no subprocess)
+When lib runs in tmux: `_*` functions don't exist → fall back to `sat internal ...`
+
+### Future: Remote Library Model
+
+The library (`lib/*.sh`) is designed to eventually be hosted remotely and executed via `curl | bash`. In this model:
+- **Binary**: Only the `sat` binary is installed locally
+- **Library**: Fetched and executed on-demand from the repository
+- **Manifest API**: Library calls `sat internal ...` for all manifest operations (no local function access)
+
+This architecture is already in place — the wrappers automatically fall back to the API when `_*` functions aren't available.
+
 ## Key Functions
 
-### Manifest helpers (common.sh)
+### Manifest helpers (common.sh wrappers)
 ```bash
-# System manifest
+# System manifest (sat-manifest)
 manifest_add()      # Add tool=source
 manifest_get()      # Get source for tool
 manifest_remove()   # Remove tool
+manifest_has()      # Check if tool exists
 
-# Master manifest
+# Master manifest (shell-manifest)
 master_add()        # Add tool:source:pid
 master_has_tool()   # Check if tool exists (any source)
 master_remove()     # Remove specific tool:source:pid
 master_promote()    # Move tool:source from master → system
+
+# Session manifest (pid-manifest)
+pid_manifest_add()    # Add tool to session
+pid_manifest_tools()  # List tools in session
+pid_manifest_source() # Get source for tool in session
+pid_manifest_remove() # Delete session folder
 ```
 
 ### Session cleanup (common.sh)

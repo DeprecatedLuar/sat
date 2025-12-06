@@ -66,28 +66,31 @@ touch "$SAT_MANIFEST" "$SAT_SHELL_MASTER"
 # Source OS detection (remote)
 source <(curl -sSL "$SAT_BASE/internal/os_detection.sh")
 
-# System manifest helpers (tool=source)
-manifest_add() { sed -i "/^$1=/d" "$SAT_MANIFEST" 2>/dev/null; echo "$1=$2" >> "$SAT_MANIFEST"; }
-manifest_get() { grep "^$1=" "$SAT_MANIFEST" 2>/dev/null | cut -d= -f2; }
-manifest_remove() { sed -i "/^$1=/d" "$SAT_MANIFEST"; }
+# =============================================================================
+# MANIFEST API WRAPPERS
+# =============================================================================
+# When running from binary: use internal _ functions (fast, no subprocess)
+# When running from lib files: call sat internal API (subprocess)
 
-# Master manifest helpers (tool:source:pid)
-master_add() { echo "$1:$2:$3" >> "$SAT_SHELL_MASTER"; }
-master_get_pids() { grep "^$1:$2:" "$SAT_SHELL_MASTER" 2>/dev/null | cut -d: -f3; }
-master_has_tool() { grep -q "^$1:" "$SAT_SHELL_MASTER" 2>/dev/null; }
-master_remove() {
-    local tool="$1" src="$2" pid="$3"
-    # Use | delimiter to avoid issues with / in paths
-    sed -i "\|^${tool}:${src}:${pid}\$|d" "$SAT_SHELL_MASTER"
-}
-master_remove_tool() { sed -i "\|^$1:|d" "$SAT_SHELL_MASTER"; }
-master_promote() {
-    local tool="$1" src="$2"
-    # Remove all entries for this tool:source from master (use | delimiter)
-    sed -i "\|^${tool}:${src}:|d" "$SAT_SHELL_MASTER"
-    # Add to system manifest if not already there
-    grep -qF "$tool=$src" "$SAT_MANIFEST" 2>/dev/null || manifest_add "$tool" "$src"
-}
+# sat-manifest (system manifest)
+manifest_add()    { declare -F _sat_manifest_add    &>/dev/null && _sat_manifest_add "$@"    || sat internal sat-manifest add "$1" "$2"; }
+manifest_get()    { declare -F _sat_manifest_get    &>/dev/null && _sat_manifest_get "$@"    || sat internal sat-manifest get "$1"; }
+manifest_remove() { declare -F _sat_manifest_remove &>/dev/null && _sat_manifest_remove "$@" || sat internal sat-manifest remove "$1"; }
+manifest_has()    { declare -F _sat_manifest_has    &>/dev/null && _sat_manifest_has "$@"    || sat internal sat-manifest has "$1"; }
+
+# shell-manifest (master manifest)
+master_add()         { declare -F _shell_manifest_add        &>/dev/null && _shell_manifest_add "$@"        || sat internal shell-manifest add "$1" "$2" "$3"; }
+master_get_pids()    { declare -F _shell_manifest_pids       &>/dev/null && _shell_manifest_pids "$@"       || sat internal shell-manifest pids "$1" "$2"; }
+master_has_tool()    { declare -F _shell_manifest_has        &>/dev/null && _shell_manifest_has "$@"        || sat internal shell-manifest has "$1"; }
+master_remove()      { declare -F _shell_manifest_remove     &>/dev/null && _shell_manifest_remove "$@"     || sat internal shell-manifest remove "$1" "$2" "$3"; }
+master_remove_tool() { declare -F _shell_manifest_remove_all &>/dev/null && _shell_manifest_remove_all "$@" || sat internal shell-manifest remove-all "$1"; }
+master_promote()     { declare -F _shell_manifest_promote    &>/dev/null && _shell_manifest_promote "$@"    || sat internal shell-manifest promote "$1" "$2"; }
+
+# pid-manifest (session manifest)
+pid_manifest_add()    { declare -F _pid_manifest_add    &>/dev/null && _pid_manifest_add "$@"    || sat internal pid-manifest add "$1" "$2" "$3"; }
+pid_manifest_tools()  { declare -F _pid_manifest_tools  &>/dev/null && _pid_manifest_tools "$@"  || sat internal pid-manifest tools "$1"; }
+pid_manifest_source() { declare -F _pid_manifest_source &>/dev/null && _pid_manifest_source "$@" || sat internal pid-manifest source "$1" "$2"; }
+pid_manifest_remove() { declare -F _pid_manifest_remove &>/dev/null && _pid_manifest_remove "$@" || sat internal pid-manifest remove "$1"; }
 
 # Animated status output (legacy)
 spin() {
