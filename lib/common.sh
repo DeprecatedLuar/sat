@@ -8,6 +8,7 @@ C_RUST=$'\033[0;91m'      # Bright red - Rust/cargo
 C_NODE=$'\033[0;92m'      # Bright green - Node/npm
 C_PYTHON=$'\033[0;94m'    # Blue - Python/uv
 C_SYSTEM=$'\033[0;97m'    # Bright white - System packages
+C_FLATPAK=$'\033[0;95m'   # Bright magenta - Flatpak
 C_REPO=$'\033[38;2;140;140;140m'  # Medium gray - GitHub repos
 C_SAT=$'\033[0;36m'       # Cyan - Sat scripts
 C_GO=$'\033[0;96m'        # Bright Cyan - Go
@@ -20,6 +21,7 @@ C_RUST_L=$'\033[38;2;220;160;160m'    # Soft pink-red
 C_NODE_L=$'\033[38;2;160;210;160m'    # Soft mint
 C_PYTHON_L=$'\033[38;2;220;210;160m'  # Soft cream
 C_SYSTEM_L=$'\033[38;2;160;180;220m'  # Soft sky blue
+C_FLATPAK_L=$'\033[38;2;220;160;220m' # Soft magenta
 C_REPO_L=$'\033[38;2;180;180;180m'    # Soft gray
 C_GO_L=$'\033[38;2;160;210;210m'      # Soft teal
 C_BREW_L=$'\033[38;2;230;175;130m'    # Soft amber
@@ -33,6 +35,7 @@ source_color() {
         npm|node)                    printf '%s' "$C_NODE" ;;
         uv|pip|python)               printf '%s' "$C_PYTHON" ;;
         apt|apk|pacman|dnf|pkg|system) printf '%s' "$C_SYSTEM" ;;
+        flatpak|flathub)             printf '%s' "$C_FLATPAK" ;;
         repo|repo:*|gh|gh:*|github)  printf '%s' "$C_REPO" ;;
         sat)                         printf '%s' "$C_SAT" ;;
         go|go:*)                     printf '%s' "$C_GO" ;;
@@ -44,8 +47,8 @@ source_color() {
     esac
 }
 
-# Install fallback order for permanent installs (system first for stability)
-INSTALL_ORDER=(system brew nix cargo uv npm sat gh)
+# Install fallback order for permanent installs (user-space first: brew/nix before system)
+INSTALL_ORDER=(brew nix system cargo uv npm sat gh)
 
 # Install order for sat shell (isolated/user-space first, system before npm)
 SHELL_INSTALL_ORDER=(brew nix cargo uv system npm sat gh)

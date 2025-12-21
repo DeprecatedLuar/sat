@@ -18,17 +18,83 @@ search_github() {
     fi
 }
 
-# Search system package manager (apt/pacman/apk/dnf)
+# Search apt (Debian/Ubuntu)
+search_system_apt() {
+    local query="$1"
+    apt search "$query" 2>/dev/null | grep -v "^Sorting\|^Full Text" | \
+        awk '/^[^ ]/ {
+            slash_pos = index($0, "/")
+            name = substr($0, 1, slash_pos-1)
+            rest = substr($0, slash_pos+1)
+            split(rest, parts, " ")
+            version = parts[2]
+
+            # Strip Debian metadata (epoch, +dfsg, -revision)
+            sub(/^[0-9]+:/, "", version)     # Remove epoch (1:)
+            sub(/\+dfsg[0-9]*/, "", version) # Remove +dfsg2
+            sub(/-[0-9]+.*$/, "", version)   # Remove -8build1
+
+            getline desc
+            gsub(/^[[:space:]]+/, "", desc)
+            if (name && version && desc)
+                print name, version, "-", desc
+        }' | head -30
+}
+
+# Search pacman (Arch)
+search_system_pacman() {
+    local query="$1"
+    pacman -Ss "$query" 2>/dev/null | awk '
+        /^[^ ]/ {
+            split($0, parts, "/")
+            split(parts[2], pkg, " ")
+            name = pkg[1]
+            version = pkg[2]
+            getline desc
+            gsub(/^[[:space:]]+/, "", desc)
+            if (desc) print name, version, "-", desc
+        }' | head -30
+}
+
+# Search apk (Alpine)
+search_system_apk() {
+    local query="$1"
+    apk search -v "$query" 2>/dev/null | head -30 | \
+        awk '{
+            match($0, /-[0-9]/)
+            if (RSTART > 0) {
+                name = substr($0, 1, RSTART-1)
+                version = substr($0, RSTART+1)
+                print name, version, "- (no description)"
+            }
+        }'
+}
+
+# Search dnf (Fedora/RHEL)
+search_system_dnf() {
+    local query="$1"
+    dnf search "$query" 2>/dev/null | grep -v "^=" | grep -v "^Last metadata" | \
+        awk -F' : ' '
+            /\./ && NF==2 {
+                split($1, parts, ".")
+                name = parts[1]
+                desc = $2
+                print name, "(version varies)", "-", desc
+            }
+        ' | head -30
+}
+
+# Search system package manager (router)
 search_system() {
     local query="$1"
     local mgr=$(get_pkg_manager)
     [[ -z "$mgr" ]] && return 1
 
     case "$mgr" in
-        apt)    apt-cache search "$query" 2>/dev/null | head -30 ;;
-        pacman) pacman -Ss "$query" 2>/dev/null | grep -A1 "^[^ ]" | head -30 ;;
-        apk)    apk search "$query" 2>/dev/null | head -30 ;;
-        dnf)    dnf search "$query" 2>/dev/null | grep -v "^=" | head -30 ;;
+        apt)    search_system_apt "$query" ;;
+        pacman) search_system_pacman "$query" ;;
+        apk)    search_system_apk "$query" ;;
+        dnf)    search_system_dnf "$query" ;;
     esac
 }
 
@@ -49,10 +115,57 @@ search_npm() {
 # Search Homebrew
 search_brew() {
     local query="$1"
+
+    # Try formula first
     local info=$(curl -sS "https://formulae.brew.sh/api/formula/$query.json" 2>/dev/null)
     if echo "$info" | jq -e '.name' &>/dev/null; then
         echo "$info" | jq -r '"\(.name) \(.versions.stable) - \(.desc // "" | split("\n")[0])"' 2>/dev/null
+        return
     fi
+
+    # Try cask if formula not found
+    info=$(curl -sS "https://formulae.brew.sh/api/cask/$query.json" 2>/dev/null)
+    if echo "$info" | jq -e '.token' &>/dev/null; then
+        echo "$info" | jq -r '
+            .token + " " + .version + " - " +
+            (if (.depends_on | has("macos")) then "(macOS only) " else "" end) +
+            (.desc // "" | split("\n")[0])
+        ' 2>/dev/null
+    fi
+}
+
+# Search Flathub
+search_flatpak() {
+    local query="$1"
+    command -v flatpak &>/dev/null || return 1
+
+    flatpak search "$query" 2>/dev/null | \
+        awk -F'\t' -v q="$query" '
+        BEGIN { IGNORECASE=1 }
+        {
+            name = $3  # Application ID
+            version = $4
+            desc = $2
+
+            if (name && version && desc && !seen[name]++) {  # Deduplicate by app ID
+                # Score: prefer shorter names (main apps) over plugins/addons
+                components = gsub(/\./, ".", name)
+
+                # Penalize plugins/addons heavily unless exact match
+                if (tolower(name) ~ "\\.(plugin|addon|extension)\\." && tolower(name) !~ "(^|\\.)(" q ")(\\.|$)") {
+                    next  # Skip plugins unless query matches component
+                }
+
+                # Boost if query matches a component exactly
+                if (tolower(name) ~ "(^|\\.)(" q ")(\\.|$)") {
+                    score = 1000 - components
+                } else {
+                    score = 500 - components
+                }
+
+                print score, name, version, "-", desc
+            }
+        }' | sort -rn | head -5 | cut -d' ' -f2-
 }
 
 # Search NixOS packages
@@ -62,7 +175,11 @@ search_nix() {
         -H "Content-Type: application/json" \
         -d "{\"query\":{\"bool\":{\"should\":[{\"term\":{\"package_attr_name\":{\"value\":\"$query\",\"boost\":10}}},{\"wildcard\":{\"package_attr_name\":\"*$query*\"}}],\"minimum_should_match\":1}},\"size\":20,\"_source\":[\"package_attr_name\",\"package_pversion\",\"package_description\"]}" 2>/dev/null | \
         jq -r '.hits.hits[]._source | "\(.package_attr_name) \(.package_pversion) - \(.package_description // "no description")"' 2>/dev/null | \
-        awk -F' ' '!seen[$1]++' | head -10
+        awk -F' ' '!seen[$1]++ {
+            # Strip nix metadata from version
+            gsub(/-unstable-[0-9]{4}-[0-9]{2}-[0-9]{2}/, "", $2)
+            print
+        }' | head -10
 }
 
 # Search PyPI
@@ -103,7 +220,7 @@ filter_relevant() {
     BEGIN { IGNORECASE=1 }
     {
         name = $1
-        pattern = "(^|[-_@/])" query "($|[-_@/])"
+        pattern = "(^|[-_@/.])" query "($|[-_@/.])"
         if (name ~ pattern) print
     }'
 }
@@ -122,6 +239,7 @@ _search_source_func() {
         py|python|uv|pypi)  echo "pypi" ;;
         brew|homebrew)      echo "brew" ;;
         nix)                echo "nix" ;;
+        flatpak|flathub)    echo "flatpak" ;;
         *)                  echo "" ;;
     esac
 }
@@ -190,6 +308,7 @@ sat_search() {
     local tmpdir=$(mktemp -d)
 
     search_system "$QUERY" > "$tmpdir/system" 2>/dev/null &
+    search_flatpak "$QUERY" > "$tmpdir/flatpak" 2>/dev/null &
     search_cargo "$QUERY" > "$tmpdir/rust" 2>/dev/null &
     search_npm "$QUERY" > "$tmpdir/node" 2>/dev/null &
     search_github "$QUERY" 10 > "$tmpdir/github_raw" 2>/dev/null &
@@ -215,10 +334,10 @@ sat_search() {
     sort -u "$tmpdir/python" -o "$tmpdir/python" 2>/dev/null
 
     # Display results
-    declare -A color_map=([system]="apt" [rust]="cargo" [python]="uv" [node]="npm" [github]="repo" [brew]="brew" [nix]="nix")
-    declare -A light_map=([system]="$C_SYSTEM_L" [rust]="$C_RUST_L" [python]="$C_PYTHON_L" [node]="$C_NODE_L" [github]="$C_REPO_L" [brew]="$C_BREW_L" [nix]="$C_NIX_L")
+    declare -A color_map=([system]="apt" [flatpak]="flatpak" [rust]="cargo" [python]="uv" [node]="npm" [github]="repo" [brew]="brew" [nix]="nix")
+    declare -A light_map=([system]="$C_SYSTEM_L" [flatpak]="$C_FLATPAK_L" [rust]="$C_RUST_L" [python]="$C_PYTHON_L" [node]="$C_NODE_L" [github]="$C_REPO_L" [brew]="$C_BREW_L" [nix]="$C_NIX_L")
 
-    for source in system brew nix rust python node github; do
+    for source in system brew nix rust python node github flatpak; do
         if [[ -s "$tmpdir/$source" ]]; then
             local filtered="$tmpdir/${source}_filtered"
             if $FILTER; then
