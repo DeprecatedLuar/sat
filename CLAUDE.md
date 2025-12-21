@@ -45,15 +45,15 @@ Shell delegates installation to `sat_install`, only handling:
 - **Library**: Internet-dependent commands (install, search, shell)
 
 ### Installation Fallback Chain
-Permanent installs (system-first for stability):
-1. system (apt/pacman/dnf/apk)
-2. brew
-3. nix
+Permanent installs (user-space first):
+1. brew
+2. nix
+3. system (apt/pacman/dnf/apk)
 4. cargo
 5. uv (Python)
 6. npm
-7. repo (GitHub install.sh)
-8. sat (wrapper scripts)
+7. sat (wrapper scripts)
+8. gh (GitHub)
 
 Shell installs (isolated-first):
 1. brew, nix, cargo, uv (user-space)
@@ -316,3 +316,82 @@ When installing from GitHub (`sat install owner/repo` or `<pkg>:gh`):
 4. **Script** fallback - run install.sh if present
 
 Search functions in `search.sh` are reused by both `sat search` and install.
+
+## Search System Architecture
+
+### Multi-Source Parallel Search
+`sat search` queries multiple package ecosystems in parallel for fast results:
+- **System packages**: apt/pacman/dnf/apk (depending on OS)
+- **Flatpak**: Flathub GUI applications
+- **Homebrew**: formulas + casks (macOS/Linux)
+- **Nix**: NixOS package repository
+- **Cargo**: Rust crates
+- **PyPI**: Python packages
+- **npm**: Node.js packages
+- **GitHub**: Source repositories
+
+### Per-Ecosystem Search Functions
+
+Each package manager has dedicated search logic in `lib/search.sh`:
+
+**System packages** (`search_system()`):
+- Router function calls OS-specific searchers:
+  - `search_system_apt()` - Debian/Ubuntu
+  - `search_system_pacman()` - Arch
+  - `search_system_apk()` - Alpine
+  - `search_system_dnf()` - Fedora/RHEL
+- Strips distro-specific version metadata (epochs, dfsg, build numbers)
+- Shows clean upstream versions
+
+**Flatpak** (`search_flatpak()`):
+- Uses `flatpak search` CLI directly
+- Smart filtering: prioritizes main apps over plugins/addons
+- Deduplicates by app ID
+- Skips `.Plugin`, `.Addon`, `.Extension` entries unless directly matching query
+
+**Homebrew** (`search_brew()`):
+- Checks both formulas (CLI tools) and casks (GUI apps)
+- Platform detection: shows `(macOS only)` flag for casks with macOS requirements
+- API-based: `formulae.brew.sh`
+
+**Nix** (`search_nix()`):
+- Searches via Bonsai search API
+- Strips `-unstable-YYYY-MM-DD` suffixes for cleaner display
+- Deduplicates by package name
+
+**Others** (cargo, npm, pypi):
+- Direct API calls to crates.io, npmjs.org, pypi.org
+- JSON parsing with jq
+
+### Display System
+
+**Color scheme** (`lib/common.sh`):
+- Each source has distinct header + pastel colors
+- Headers: bright/saturated (magenta, green, blue, etc.)
+- Package names: soft pastels matching header hue
+
+**Filtering** (`filter_relevant()`):
+- Matches query against package name with word boundaries
+- Recognizes `-`, `_`, `@`, `/`, `.` as delimiters
+- Case-insensitive
+
+**Output format**:
+```
+source:
+  package-name version - description
+```
+
+### Version Normalization
+
+Different ecosystems show versions differently:
+- **apt**: Strips `1:`, `+dfsg`, `-8build1` → clean upstream
+- **nix**: Strips `-unstable-2025-01-01` → release version
+- **brew/npm/cargo/pypi**: Direct from API
+- **flatpak**: From AppStream metadata
+
+### Installation Error Handling
+
+**Brew casks on Linux**:
+- Detects "macOS is required" errors
+- Shows platform-specific error via status display
+- Prevents misleading "not found" messages

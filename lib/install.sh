@@ -98,7 +98,7 @@ sat_install() {
             # Shell session: track in session + master manifest
             pid_manifest_add "$SAT_SESSION" "$tool" "$src"
             master_add "$tool" "$src" "$SAT_SESSION"
-you         elif master_has_tool "$tool"; then
+         elif master_has_tool "$tool"; then
             # Permanent install but tool exists in session: promote it
             master_promote "$tool" "$src"
             printf "  ${C_DIM}(promoted from shell session)${C_RESET}\n"
@@ -165,8 +165,10 @@ you         elif master_has_tool "$tool"; then
             fi
 
             # Other sources - background with spinner
-            try_source "$PROGRAM" "$FORCE_SOURCE" >/dev/null 2>&1 &
+            local error_file=$(mktemp)
+            try_source "$PROGRAM" "$FORCE_SOURCE" >/dev/null 2>"$error_file" &
             spin_with_style "$PROGRAM" $! "$FORCE_SOURCE"
+            local install_exit=$?
             if wait $!; then
                 local src="$FORCE_SOURCE"
                 local bin_name="$PROGRAM"
@@ -177,8 +179,15 @@ you         elif master_has_tool "$tool"; then
                 _track_install "$bin_name" "$src"
                 status_ok "$bin_name" "$src"
             else
-                status_fail "$PROGRAM not found in $(source_display "$FORCE_SOURCE")"
+                # Show actual error if available, otherwise generic message
+                if [[ -s "$error_file" ]]; then
+                    local error_msg=$(cat "$error_file")
+                    status_fail "${error_msg#Error: }"  # Strip "Error: " prefix
+                else
+                    status_fail "$PROGRAM not found in $(source_display "$FORCE_SOURCE")"
+                fi
             fi
+            rm -f "$error_file"
             continue
         fi
 
