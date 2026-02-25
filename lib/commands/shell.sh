@@ -167,14 +167,15 @@ export XDG_CACHE_HOME="$xdg_dir/cache"
 export XDG_STATE_HOME="$xdg_dir/state"
 export PATH="$xdg_dir/bin:\$PATH"
 
-SAT_LIB="$SAT_LIB"
+export SAT_LIBRARY="$SAT_LIBRARY"
+export SAT_DATA="$SAT_DATA"
 SAT_SPECS=($all_specs_str)
 RCFILE_VARS
 
     cat >> "$rcfile" << 'RCFILE_MAIN'
 
-source "$SAT_LIB/common.sh"
-source "$SAT_LIB/commands/install.sh"
+source "$SAT_LIBRARY/common.sh"
+source "$SAT_LIBRARY/commands/install.sh"
 
 # Use shell install order (isolated sources first)
 INSTALL_ORDER=("${SHELL_INSTALL_ORDER[@]}")
