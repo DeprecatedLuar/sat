@@ -7,12 +7,12 @@ SAT_LIBRARY="${XDG_DATA_HOME:-$HOME/.local/share}/sat/lib"
 _ensure_lib() {
     [[ -f "$SAT_LIBRARY/common.sh" ]] && return 0
 
-    echo "Fetching sat library from GitHub..."
+    echo "Downloading latest sat version..."
     mkdir -p "$SAT_LIBRARY"
 
     if ! curl -sSL "https://github.com/DeprecatedLuar/sat/archive/refs/heads/main.tar.gz" | \
-         tar xzf - --strip-components=1 -C "$SAT_LIBRARY" "sat-main/lib" 2>/dev/null; then
-        echo "Error: Failed to fetch sat library. Check network connection and firewall settings." >&2
+         tar xzf - --strip-components=2 -C "$SAT_LIBRARY" "sat-main/lib" 2>/dev/null; then
+        echo "Error: Failed to download sat. Check network connection and firewall settings." >&2
         exit 1
     fi
 }
