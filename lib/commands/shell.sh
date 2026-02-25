@@ -174,7 +174,7 @@ RCFILE_VARS
     cat >> "$rcfile" << 'RCFILE_MAIN'
 
 source "$SAT_LIB/common.sh"
-source "$SAT_LIB/install.sh"
+source "$SAT_LIB/commands/install.sh"
 
 # Use shell install order (isolated sources first)
 INSTALL_ORDER=("${SHELL_INSTALL_ORDER[@]}")

@@ -281,6 +281,79 @@ exit
 sat which ripgrep                     # Still installed (system manifest)
 ```
 
+## Code Patterns & Best Practices
+
+### Bash Parser Limitations
+
+**Critical**: Bash has a parser bug when combining:
+1. `declare -A` (associative arrays)
+2. Nested function definitions
+3. Control structures (`while`, `if`) inside those nested functions
+
+```bash
+# ❌ This causes syntax errors:
+func() {
+    declare -A arr=(["key"]="val")
+
+    nested() {
+        while [[ condition ]]; do  # ← Syntax error!
+            ...
+        done
+    }
+}
+
+# ✅ Solution: Use helper functions with explicit mappings
+func() {
+    # Define nested functions FIRST
+    nested() { ... }
+
+    # Use helper functions instead of associative arrays
+    _process() {
+        local key="$1" val="$2"
+        # Explicit mapping, no arrays
+    }
+
+    _process "cargo" "$cargo_bin"
+    _process "npm" "$npm_bin"
+}
+```
+
+**Example**: `lib/commands/scan.sh` uses `_scan_dir()` helper with explicit source-to-directory mappings instead of `declare -A scan_dirs`.
+
+### DRY Principles
+
+Extract repeated code into helper functions:
+
+```bash
+# lib/commands/scan.sh
+_try_add_tool() {
+    local prog="$1" src="$2"
+    is_excluded "$prog" "$src" && return 1
+    [[ -n "$(_sat_manifest_get "$prog")" ]] && return 1
+    _shell_manifest_has "$prog" && return 1
+    _sat_manifest_add "$prog" "$src"
+    # ... display logic
+}
+
+# Used everywhere instead of repeating 9 lines
+_try_add_tool "$prog" "$src" && ((added++))
+```
+
+```bash
+# lib/commands/list.sh
+_display_tool() {
+    local prog="$1" source="$2"
+    # Centralized display formatting
+}
+```
+
+### Function Organization
+
+In files with nested functions:
+1. **Define helper functions first** (before any complex data structures)
+2. **Keep helper functions small and focused** (single responsibility)
+3. **Use explicit parameter passing** over global variables when possible
+
 ## Error Handling
 
 - **No silent failures**: All errors visible with context

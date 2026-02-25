@@ -1,10 +1,24 @@
 #!/usr/bin/env bash
 # sat - Satellite installer (universal package manager)
 
-SAT_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-SAT_LIB="$SAT_ROOT/lib"
+SAT_LIBRARY="${XDG_DATA_HOME:-$HOME/.local/share}/sat/lib"
 
-source "$SAT_LIB/common.sh"
+# Ensure library is present (fetch from GitHub if missing)
+_ensure_lib() {
+    [[ -f "$SAT_LIBRARY/common.sh" ]] && return 0
+
+    echo "Fetching sat library from GitHub..."
+    mkdir -p "$SAT_LIBRARY"
+
+    if ! curl -sSL "https://github.com/DeprecatedLuar/sat/archive/refs/heads/main.tar.gz" | \
+         tar xzf - --strip-components=1 -C "$SAT_LIBRARY" "sat-main/lib" 2>/dev/null; then
+        echo "Error: Failed to fetch sat library. Check network connection and firewall settings." >&2
+        exit 1
+    fi
+}
+
+_ensure_lib
+source "$SAT_LIBRARY/common.sh"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ──[MANIFEST FUNCTIONS]────────────────────────────────────────────────────────
@@ -44,401 +58,63 @@ _pid_manifest_remove() { rm -rf "$SAT_SHELL_DIR/$1" "/tmp/sat-$1" 2>/dev/null; }
 [[ "$1" != "internal" ]] && cleanup_orphaned_sessions
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ──[UNINSTALL]─────────────────────────────────────────────────────────────────
-# ══════════════════════════════════════════════════════════════════════════════
-
-sat_uninstall() {
-    for arg in "$@"; do
-        # Parse tool:source syntax (handles aliases like :py, :rs, :sys)
-        parse_tool_spec "$arg"
-        local PROGRAM="$_TOOL_NAME"
-        local EXPLICIT_SOURCE="$_TOOL_SOURCE"
-
-        local SOURCE TRACKED=true BINARY="$PROGRAM"
-
-        # If explicit source specified, use it directly
-        if [[ -n "$EXPLICIT_SOURCE" ]]; then
-            SOURCE="$EXPLICIT_SOURCE"
-            TRACKED=false
-        else
-            # Manifest lookup
-            SOURCE=$(_sat_manifest_get "$PROGRAM")
-
-            # If not found directly, search by repo name (for gh:user/repo entries)
-            if [[ -z "$SOURCE" ]]; then
-                local match=$(grep "=gh:.*/${PROGRAM}$" "$SAT_MANIFEST" 2>/dev/null | head -1)
-                if [[ -n "$match" ]]; then
-                    BINARY="${match%%=*}"
-                    SOURCE="${match#*=}"
-                fi
-            fi
-
-            # Fallback: detect source from filesystem
-            if [[ -z "$SOURCE" ]]; then
-                if ! command -v "$PROGRAM" &>/dev/null; then
-                    status "$PROGRAM not found"
-                    continue
-                fi
-                SOURCE=$(detect_source "$PROGRAM")
-                if [[ -z "$SOURCE" || "$SOURCE" == "unknown" ]]; then
-                    status "$PROGRAM source unknown, can't remove"
-                    continue
-                fi
-                TRACKED=false
-            fi
-        fi
-
-        printf "Removing %s\n" "$BINARY"
-        if pkg_remove "$BINARY" "$SOURCE"; then
-            [[ "$TRACKED" == true ]] && _sat_manifest_remove "$BINARY"
-            status_ok "$BINARY removed" "$SOURCE"
-        else
-            status_fail "$BINARY removal failed"
-        fi
-    done
-    hash -r
-}
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ──[LIST]──────────────────────────────────────────────────────────────────────
-# ══════════════════════════════════════════════════════════════════════════════
-
-sat_list() {
-    local has_content=false
-
-    # Show current session tools (if inside a shell)
-    if [[ -n "$SAT_SESSION" && -f "$SAT_SESSION_MANIFEST" ]]; then
-        echo "Current session (temporary):"
-        while IFS='=' read -r key value; do
-            [[ "$key" != "TOOL" ]] && continue
-            src=$(grep "^SOURCE_$value=" "$SAT_SESSION_MANIFEST" | cut -d= -f2)
-            display=$(source_display "$src")
-            color=$(source_color "$display")
-            printf "  ${C_DIM}%-20s${C_RESET} [${color}%s${C_RESET}]\n" "$value" "$display"
-        done < "$SAT_SESSION_MANIFEST"
-        echo ""
-        has_content=true
-    fi
-
-    # Show active shell tools (from master manifest)
-    if [[ -s "$SAT_SHELL_MASTER" ]]; then
-        local active_tools=()
-        while IFS=: read -r tool src pid; do
-            [[ -z "$tool" ]] && continue
-            # Only show if PID is alive and not current session
-            if kill -0 "$pid" 2>/dev/null && [[ "$pid" != "$SAT_SESSION" ]]; then
-                active_tools+=("$tool:$src:$pid")
-            fi
-        done < "$SAT_SHELL_MASTER"
-
-        if [[ ${#active_tools[@]} -gt 0 ]]; then
-            echo "Active shell sessions:"
-            for entry in "${active_tools[@]}"; do
-                IFS=: read -r tool src pid <<< "$entry"
-                display=$(source_display "$src")
-                color=$(source_color "$display")
-                printf "  ${C_DIM}%-20s${C_RESET} [${color}%s${C_RESET}] ${C_DIM}(pid $pid)${C_RESET}\n" "$tool" "$display"
-            done
-            echo ""
-            has_content=true
-        fi
-    fi
-
-    # Show system manifest (permanent installs) grouped by source
-    if [[ -s "$SAT_MANIFEST" ]]; then
-        # Collect entries by normalized source
-        declare -A by_source
-        declare -a stale=()
-        while IFS='=' read -r prog source; do
-            [[ -z "$prog" ]] && continue
-            if ! command -v "$prog" &>/dev/null; then
-                stale+=("$prog")
-                continue
-            fi
-            # Normalize source for grouping (repo:* -> repo, apt/pacman/etc -> system)
-            local group="$source"
-            case "$source" in
-                repo:*) group="repo" ;;
-                apt|apk|pacman|dnf|pkg) group="system" ;;
-            esac
-            by_source[$group]+="$prog=$source"$'\n'
-        done < "$SAT_MANIFEST"
-
-        # Print in INSTALL_ORDER, then any remaining
-        local printed=()
-        for src in "${INSTALL_ORDER[@]}"; do
-            [[ -z "${by_source[$src]}" ]] && continue
-            while IFS='=' read -r prog source; do
-                [[ -z "$prog" ]] && continue
-                display=$(source_display "$source")
-                color=$(source_color "$display")
-                light=$(source_light "$source")
-                printf "  ${light}%-20s${C_RESET} [${color}%s${C_RESET}]\n" "$prog" "$display"
-            done <<< "${by_source[$src]}"
-            printed+=("$src")
-        done
-
-        # Print sources not in INSTALL_ORDER (go, manual, unknown, etc)
-        for src in "${!by_source[@]}"; do
-            [[ " ${printed[*]} " =~ " $src " ]] && continue
-            while IFS='=' read -r prog source; do
-                [[ -z "$prog" ]] && continue
-                display=$(source_display "$source")
-                color=$(source_color "$display")
-                light=$(source_light "$source")
-                printf "  ${light}%-20s${C_RESET} [${color}%s${C_RESET}]\n" "$prog" "$display"
-            done <<< "${by_source[$src]}"
-        done
-
-        # Clean stale entries
-        if [[ ${#stale[@]} -gt 0 ]]; then
-            echo ""
-            echo "Cleaning ${#stale[@]} stale entries..."
-            for prog in "${stale[@]}"; do
-                _sat_manifest_remove "$prog"
-            done
-        fi
-        has_content=true
-    fi
-
-    [[ "$has_content" == false ]] && echo "No packages tracked by sat"
-}
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ──[SCAN]──────────────────────────────────────────────────────────────────────
-# ══════════════════════════════════════════════════════════════════════════════
-
-sat_scan() {
-    echo "Scanning ecosystems..."
-
-    # Detect bin directories dynamically (default first, then actual location)
-    local cargo_bin="$HOME/.cargo/bin"
-    [[ ! -d "$cargo_bin" ]] && command -v cargo &>/dev/null && cargo_bin="$(dirname "$(command -v cargo)")"
-
-    local npm_bin="$HOME/.npm-global/bin"
-    [[ ! -d "$npm_bin" ]] && command -v npm &>/dev/null && npm_bin="$(npm root -g 2>/dev/null)/../bin"
-
-    local go_bin="$HOME/go/bin"
-    [[ ! -d "$go_bin" ]] && command -v go &>/dev/null && go_bin="$(go env GOPATH 2>/dev/null)/bin"
-
-    declare -A scan_dirs=(
-        ["cargo"]="$cargo_bin"
-        ["npm"]="$npm_bin"
-        ["uv"]="$HOME/.local/share/uv/tools"
-        ["go"]="$go_bin"
-    )
-
-    is_from_repo() {
-        local bin="$1"
-        local real=$(readlink -f "$bin" 2>/dev/null || echo "$bin")
-        local dir=$(dirname "$real")
-        while [[ "$dir" != "/" && "$dir" != "$HOME" ]]; do
-            [[ -d "$dir/.git" ]] && return 0
-            dir=$(dirname "$dir")
-        done
-        return 1
-    }
-
-    is_excluded() {
-        local prog="$1" src="$2"
-        # Global exclusions
-        case "$prog" in
-            .*|_*|*-config|*-settings) return 0 ;;
-        esac
-        # Per-source exclusions
-        case "$src" in
-            cargo) [[ "$prog" == cargo-* || "$prog" == clippy-driver || "$prog" == rust[!u]* || "$prog" == rls ]] && return 0 ;;
-            nix)   [[ "$prog" == nix || "$prog" == nix-* ]] && return 0 ;;
-            *)     [[ "$prog" == git-* || "$prog" == scalar || "$prog" == trash-* ]] && return 0 ;;
-        esac
-        return 1
-    }
-
-    # Get brew leaves for validation
-    local brew_leaves=""
-    command -v brew &>/dev/null && brew_leaves=$(brew leaves 2>/dev/null)
-
-    # Prune excluded entries and brew deps from manifest
-    local pruned=0
-    while IFS='=' read -r prog source; do
-        [[ -z "$prog" ]] && continue
-        local should_prune=false
-        if is_excluded "$prog" "$source"; then
-            should_prune=true
-        elif [[ "$source" == "brew" && -n "$brew_leaves" ]]; then
-            # Prune brew entries not in leaves (deps)
-            echo "$brew_leaves" | grep -qxF "$prog" || should_prune=true
-        fi
-        if $should_prune; then
-            _sat_manifest_remove "$prog"
-            printf "  ${C_DIM}- %-20s (excluded)${C_RESET}\n" "$prog"
-            ((pruned++))
-        fi
-    done < "$SAT_MANIFEST"
-
-    local added=0
-
-    # Scan directory-based sources
-    for src in "${!scan_dirs[@]}"; do
-        for dir in ${scan_dirs[$src]}; do
-            [[ ! -d "$dir" ]] && continue
-            for bin in "$dir"/*; do
-                [[ ! -x "$bin" ]] && continue
-                prog=$(basename "$bin")
-                is_excluded "$prog" "$src" && continue
-                [[ -n "$(_sat_manifest_get "$prog")" ]] && continue
-                _shell_manifest_has "$prog" && continue
-                _sat_manifest_add "$prog" "$src"
-                display=$(source_display "$src")
-                color=$(source_color "$display")
-                printf "  ${color}+${C_RESET} %-20s [${color}%s${C_RESET}]\n" "$prog" "$display"
-                ((added++))
-            done
-        done
-    done
-
-    # Homebrew: query explicit installs only (not deps), get actual binary names
-    if command -v brew &>/dev/null; then
-        while read -r formula; do
-            [[ -z "$formula" ]] && continue
-            # Get actual binaries installed by this formula
-            while read -r bin; do
-                [[ -z "$bin" ]] && continue
-                prog=$(basename "$bin")
-                is_excluded "$prog" "brew" && continue
-                [[ -n "$(_sat_manifest_get "$prog")" ]] && continue
-                _shell_manifest_has "$prog" && continue
-                _sat_manifest_add "$prog" "brew"
-                printf "  ${C_BREW}+${C_RESET} %-20s [${C_BREW}brew${C_RESET}]\n" "$prog"
-                ((added++))
-            done < <(brew list "$formula" 2>/dev/null | grep '/bin/')
-        done < <(brew leaves 2>/dev/null)
-    fi
-
-    # Nix: scan profile bin but exclude nix-* meta-tools
-    if [[ -d "$HOME/.nix-profile/bin" ]]; then
-        for bin in "$HOME/.nix-profile/bin"/*; do
-            [[ ! -x "$bin" ]] && continue
-            prog=$(basename "$bin")
-            is_excluded "$prog" "nix" && continue
-            [[ -n "$(_sat_manifest_get "$prog")" ]] && continue
-            _shell_manifest_has "$prog" && continue
-            _sat_manifest_add "$prog" "nix"
-            printf "  ${C_NIX}+${C_RESET} %-20s [${C_NIX}nix${C_RESET}]\n" "$prog"
-            ((added++))
-        done
-    fi
-
-    # Local bin: check for repo-sourced tools
-    if [[ -d "$HOME/.local/bin" ]]; then
-        for bin in "$HOME/.local/bin"/*; do
-            [[ ! -x "$bin" ]] && continue
-            prog=$(basename "$bin")
-            is_excluded "$prog" "repo" && continue
-            [[ -n "$(_sat_manifest_get "$prog")" ]] && continue
-            _shell_manifest_has "$prog" && continue
-            if is_from_repo "$bin"; then
-                _sat_manifest_add "$prog" "repo"
-                printf "  ${C_REPO}+${C_RESET} %-20s [${C_REPO}repo${C_RESET}]\n" "$prog"
-                ((added++))
-            fi
-        done
-    fi
-
-    echo ""
-    [[ $pruned -gt 0 ]] && echo "Pruned $pruned excluded entries"
-    echo "Added $added packages to manifest"
-}
-
-# ══════════════════════════════════════════════════════════════════════════════
 # ──[ROUTER]────────────────────────────────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════════════
 
 case "$1" in
     deps|dependencies)
-        echo "Installing sat dependencies..."
-        echo ""
-        DEPS=(tmux wget curl jq)
-        source "$SAT_LIB/install.sh"
-        for dep in "${DEPS[@]}"; do
-            if command -v "$dep" &>/dev/null; then
-                printf "  ${C_CHECK} %s\n" "$dep"
-            else
-                printf "  Installing %s...\n" "$dep"
-                sat_install "$dep:sys"
-            fi
-        done
-        echo ""
-        echo "sat is ready to use."
+        source "$SAT_LIBRARY/commands/deps.sh"
+        sat_deps
         ;;
 
     install|i)
-        # [[ -z "$2" ]] && { echo "Usage: sat install <program> [--rust|--python|--node|--go|--system]"; exit 1; }
         shift
-        source "$SAT_LIB/install.sh"
+        source "$SAT_LIBRARY/commands/install.sh"
         sat_install "$@"
         ;;
 
     search)
         [[ -z "$2" ]] && { echo "Usage: sat search <program> [--wrap]"; exit 1; }
         shift
-        source "$SAT_LIB/search.sh"
+        source "$SAT_LIBRARY/commands/search.sh"
         sat_search "$@"
         ;;
 
     uninstall|remove|rm)
         [[ -z "$2" ]] && { echo "Usage: sat uninstall <program> [program2] ..."; exit 1; }
         shift
+        source "$SAT_LIBRARY/commands/uninstall.sh"
         sat_uninstall "$@"
         ;;
 
     shell)
         shift
-        source "$SAT_LIB/shell.sh"
+        source "$SAT_LIBRARY/commands/shell.sh"
         sat_shell "$@"
         ;;
 
     list|ls)
+        source "$SAT_LIBRARY/commands/list.sh"
         sat_list
         ;;
 
     track)
         [[ -z "$2" ]] && { echo "Usage: sat track <program> [program2] ..."; exit 1; }
         shift
-        for prog in "$@"; do
-            if [[ -n "$(_sat_manifest_get "$prog")" ]]; then
-                echo "$prog: already tracked"
-                continue
-            fi
-            bin=$(command -v "$prog" 2>/dev/null)
-            if [[ -z "$bin" ]]; then
-                echo "$prog: not found"
-                continue
-            fi
-            src=$(detect_source "$prog")
-            [[ -z "$src" || "$src" == "unknown" ]] && { echo "$prog: unknown source, skipping"; continue; }
-            _sat_manifest_add "$prog" "$src"
-            display=$(source_display "$src")
-            color=$(source_color "$display")
-            printf "%-20s [${color}%s${C_RESET}] tracked\n" "$prog" "$display"
-        done
+        source "$SAT_LIBRARY/commands/track.sh"
+        sat_track "$@"
         ;;
 
     scan)
+        source "$SAT_LIBRARY/commands/scan.sh"
         sat_scan
         ;;
 
     untrack)
         [[ -z "$2" ]] && { echo "Usage: sat untrack <program> [program2] ..."; exit 1; }
         shift
-        for prog in "$@"; do
-            if [[ -z "$(_sat_manifest_get "$prog")" ]]; then
-                echo "$prog: not tracked"
-                continue
-            fi
-            _sat_manifest_remove "$prog"
-            echo "$prog: untracked"
-        done
+        source "$SAT_LIBRARY/commands/untrack.sh"
+        sat_untrack "$@"
         ;;
 
     source|src)
@@ -454,52 +130,21 @@ case "$1" in
         ;;
 
     clone)
-        [[ -z "$2" ]] && { echo "Usage: sat clone <repo> [destination]"; exit 1; }
-        REPO="$2"
-        DEST="${3:-.}"
-        [[ -z "$3" ]] && read -p "Where to clone? (default: ./): " DEST && DEST="${DEST:-.}"
-        echo "Cloning $LUAR/$REPO to $DEST..."
-        git clone "https://github.com/$LUAR/$REPO.git" "$DEST/$REPO"
+        shift
+        source "$SAT_LIBRARY/commands/clone.sh"
+        sat_clone "$@"
+        ;;
+
+    pull)
+        source "$SAT_LIBRARY/commands/pull.sh"
+        sat_pull
         ;;
 
     info|which|whereis)
         [[ -z "$2" ]] && { echo "Usage: sat info <program> [program2] ..."; exit 1; }
         shift
-        for prog in "$@"; do
-            bin=$(command -v "$prog" 2>/dev/null)
-            if [[ -z "$bin" ]]; then
-                echo "$prog: not found"
-                continue
-            fi
-            real=$(readlink -f "$bin" 2>/dev/null || echo "$bin")
-            src=$(resolve_source "$prog" "")
-            display=$(source_display "$src")
-            color=$(source_color "$display")
-            tracked=$(_sat_manifest_get "$prog")
-            ver=$("$prog" --version 2>/dev/null | head -1 || echo "unknown")
-
-            light=$(source_light "$src")
-            printf "${light}%s${C_RESET} [${color}%s${C_RESET}] ${C_DIM}%s${C_RESET}\n" "$prog" "$display" "$ver"
-            echo "  path:   $bin"
-            [[ "$real" != "$bin" ]] && echo "  target: $real"
-            # Show repo for gh:user/repo sources
-            [[ "$tracked" == gh:* ]] && echo "  repo:   ${tracked#gh:}"
-            [[ -n "$tracked" ]] && echo "  tracked"
-
-            # Show shadowed installations
-            all_sources=$(resolve_all_sources "$prog")
-            shadowed=$(echo "$all_sources" | grep -v ":active$")
-            if [[ -n "$shadowed" ]]; then
-                echo "  shadowed:"
-                while IFS=: read -r s_src s_path _; do
-                    [[ -z "$s_src" ]] && continue
-                    s_display=$(source_display "$s_src")
-                    s_color=$(source_color "$s_display")
-                    printf "    ${C_DIM}[${s_color}%s${C_RESET}${C_DIM}] %s${C_RESET}\n" "$s_display" "$s_path"
-                done <<< "$shadowed"
-            fi
-            [[ $# -gt 1 ]] && echo ""
-        done
+        source "$SAT_LIBRARY/commands/info.sh"
+        sat_info "$@"
         ;;
 
     # ══════════════════════════════════════════════════════════════════════════════
@@ -628,6 +273,7 @@ Commands:
   track <program>     - Add existing program to manifest for sat management
   untrack <program>   - Remove from manifest without uninstalling
   scan                - Scan ecosystem dirs and add all found packages
+  pull                - Refresh sat library from GitHub
   clone <repo> [dest] - Clone your repo
 
 Source syntax (install/shell):

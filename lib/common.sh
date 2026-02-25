@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # sat common - shared functions
 
+# Auto-detect library directory (set by binary or inferred from script location)
+SAT_LIB="${SAT_LIB:-$(dirname "${BASH_SOURCE[0]}")}"
+export SAT_LIB
+
 # Colors by source (headers)
 C_RESET=$'\033[0m'
 C_DIM=$'\033[2m'
@@ -56,18 +60,66 @@ SHELL_INSTALL_ORDER=(brew nix cargo uv system npm sat gh)
 LUAR="DeprecatedLuar"
 SAT_REPO="the-satellite/main"
 SAT_BASE="https://raw.githubusercontent.com/$LUAR/$SAT_REPO"
-SAT_DATA="$HOME/.local/share/sat"
+SAT_DATA="${XDG_DATA_HOME:-$HOME/.local/share}/sat"
 SAT_MANIFEST="${SAT_MANIFEST:-$SAT_DATA/manifest}"
 SAT_SHELL_DIR="$SAT_DATA/shell"
 SAT_SHELL_MASTER="$SAT_SHELL_DIR/manifest"
 SAT_INSTALL_DIR="${SAT_LIB:-$(dirname "${BASH_SOURCE[0]}")}/installation"
 
+# Ensure OS info cache exists
+_ensure_os_info() {
+    local os_info="$SAT_DATA/os-info"
+
+    # Return if cache exists
+    [[ -f "$os_info" ]] && return 0
+
+    # Ensure directory exists
+    mkdir -p "$SAT_DATA"
+
+    # Fetch and evaluate os_detection.sh to get functions
+    local os_script
+    os_script=$(curl -sSL "$SAT_BASE/internal/os_detection.sh" 2>/dev/null) || {
+        echo "Error: Failed to fetch OS detection script" >&2
+        return 1
+    }
+
+    # Source the script to load detection functions
+    eval "$os_script"
+
+    # Call functions and write results to cache
+    {
+        echo "SAT_OS=$(detect_os)"
+        echo "SAT_DISTRO=$(detect_distro "$(detect_os)")"
+        echo "SAT_DISTRO_FAMILY=$(detect_distro_family "$(detect_distro "$(detect_os)")")"
+
+        # Calculate package manager based on distro
+        local distro family
+        distro=$(detect_distro "$(detect_os)")
+        family=$(detect_distro_family "$distro")
+
+        local pkg_mgr=""
+        case "$distro" in
+            termux) pkg_mgr="pkg" ;;
+            *)
+                case "$family" in
+                    debian) pkg_mgr="apt" ;;
+                    alpine) pkg_mgr="apk" ;;
+                    arch)   pkg_mgr="pacman" ;;
+                    rhel)   pkg_mgr="dnf" ;;
+                esac
+                ;;
+        esac
+        echo "SAT_PKG_MANAGER=$pkg_mgr"
+    } > "$os_info"
+}
+
 # Ensure data dirs exist
 mkdir -p "$SAT_DATA" "$SAT_SHELL_DIR"
 touch "$SAT_MANIFEST" "$SAT_SHELL_MASTER"
 
-# Source OS detection (remote)
-source <(curl -sSL "$SAT_BASE/internal/os_detection.sh")
+# Ensure OS detection cache exists and source it
+_ensure_os_info
+source "$SAT_DATA/os-info"
 
 # =============================================================================
 # MANIFEST API WRAPPERS
@@ -315,26 +367,6 @@ resolve_all_sources() {
     printf '%s\n' "${results[@]}"
 }
 
-# Detect package manager based on distro family
-get_pkg_manager() {
-    local distro family
-    distro=$(detect_distro "$(detect_os)")
-    family=$(detect_distro_family "$distro")
-
-    case "$distro" in
-        termux) echo "pkg" ;;
-        *)
-            case "$family" in
-                debian) echo "apt" ;;
-                alpine) echo "apk" ;;
-                arch)   echo "pacman" ;;
-                rhel)   echo "dnf" ;;
-                *)      echo "" ;;
-            esac
-            ;;
-    esac
-}
-
 # Check if package exists in native repo
 pkg_exists() {
     local pkg="$1" mgr="$2"
@@ -391,8 +423,8 @@ pkg_remove() {
         gh:*)
             rm -f "$HOME/.local/bin/$pkg" "$HOME/bin/$pkg" 2>/dev/null
             ;;
-        system)  # Generic system - detect package manager
-            local mgr=$(get_pkg_manager)
+        system)  # Generic system - use cached package manager
+            local mgr="$SAT_PKG_MANAGER"
             [[ -z "$mgr" ]] && return 1
             pkg_remove "$pkg" "$mgr"
             return $?
@@ -602,7 +634,7 @@ ensure_deps() {
 
     [[ ${#missing[@]} -eq 0 ]] && return 0
 
-    local mgr=$(get_pkg_manager)
+    local mgr="$SAT_PKG_MANAGER"
     if [[ -z "$mgr" ]]; then
         printf "${C_DIM}sat: missing deps (%s) - install manually${C_RESET}\n" "${missing[*]}" >&2
         return 1
