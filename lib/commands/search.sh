@@ -87,7 +87,7 @@ search_system_dnf() {
 # Search system package manager (router)
 search_system() {
     local query="$1"
-    local mgr=$(get_pkg_manager)
+    local mgr="$SAT_PKG_MANAGER"
     [[ -z "$mgr" ]] && return 1
 
     case "$mgr" in

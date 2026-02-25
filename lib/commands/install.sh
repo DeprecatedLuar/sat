@@ -2,16 +2,16 @@
 # sat install - install programs from various sources
 
 # Source installation modules
-source "$SAT_INSTALL_DIR/github.sh"
-source "$SAT_INSTALL_DIR/cargo.sh"
-source "$SAT_INSTALL_DIR/system.sh"
-source "$SAT_INSTALL_DIR/brew.sh"
-source "$SAT_INSTALL_DIR/uv.sh"
-source "$SAT_INSTALL_DIR/npm.sh"
-source "$SAT_INSTALL_DIR/go.sh"
-source "$SAT_INSTALL_DIR/nix.sh"
-source "$SAT_INSTALL_DIR/sat.sh"
-source "$SAT_LIB/search.sh"
+source "$SAT_LIB/installation/github.sh"
+source "$SAT_LIB/installation/cargo.sh"
+source "$SAT_LIB/installation/system.sh"
+source "$SAT_LIB/installation/brew.sh"
+source "$SAT_LIB/installation/uv.sh"
+source "$SAT_LIB/installation/npm.sh"
+source "$SAT_LIB/installation/go.sh"
+source "$SAT_LIB/installation/nix.sh"
+source "$SAT_LIB/installation/sat.sh"
+source "$SAT_LIB/commands/search.sh"
 
 # =============================================================================
 # SOURCE-SPECIFIC INSTALLATION

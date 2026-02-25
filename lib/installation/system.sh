@@ -5,7 +5,7 @@
 # Returns 0 on success, 1 on failure
 install_system() {
     local tool="$1"
-    local mgr=$(get_pkg_manager)
+    local mgr="$SAT_PKG_MANAGER"
 
     [[ -z "$mgr" ]] && return 1
     pkg_exists "$tool" "$mgr" || return 1

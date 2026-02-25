@@ -31,7 +31,7 @@ install_cargo() {
         fi
 
         # Try system package manager
-        local mgr=$(get_pkg_manager)
+        local mgr="$SAT_PKG_MANAGER"
         if [[ -n "$mgr" ]] && pkg_install "$missing" "$mgr" &>/dev/null; then
             printf "[${C_CHECK}] %-20s [${C_SYSTEM}system${C_RESET}] ${C_DIM}(build dep)${C_RESET}\n" "$missing"
             cargo install "$tool" &>/dev/null && return 0
