@@ -87,7 +87,7 @@ case "$1" in
     source|src)
         [[ -z "$2" ]] && { echo "Usage: sat source <packagemanager>"; exit 1; }
         SOURCE_SCRIPT="$SAT_BASE/packages/sources/$2.sh"
-        source <(curl -sSL "$SOURCE_SCRIPT") || { echo "Source '$2' not found"; exit 1; }
+        source <(curl -sSL "$SOURCE_SCRIPT" | tr -d '\r') || { echo "Source '$2' not found"; exit 1; }
         # Try bootstrap function, else _ensure_<name> pattern
         if declare -f bootstrap &>/dev/null; then
             bootstrap

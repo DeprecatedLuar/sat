@@ -78,7 +78,7 @@ _ensure_os_info() {
 
     # Fetch and evaluate os_detection.sh to get functions
     local os_script
-    os_script=$(curl -sSL "$SAT_BASE/internal/os_detection.sh" 2>/dev/null) || {
+    os_script=$(curl -sSL "$SAT_BASE/internal/os_detection.sh" 2>/dev/null | tr -d '\r') || {
         echo "Error: Failed to fetch OS detection script" >&2
         return 1
     }
