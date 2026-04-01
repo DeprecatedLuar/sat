@@ -86,6 +86,10 @@ case "$1" in
 
     source|src)
         [[ -z "$2" ]] && { echo "Usage: sat source <packagemanager>"; exit 1; }
+        case "$2" in
+            gh|github) set -- "${1}" "huber" "${@:3}" ;;
+            homebrew)  set -- "${1}" "brew"  "${@:3}" ;;
+        esac
         SOURCE_SCRIPT="$SAT_BASE/packages/sources/$2.sh"
         source <(curl -sSL "$SOURCE_SCRIPT" | tr -d '\r') || { echo "Source '$2' not found"; exit 1; }
         # Try bootstrap function, else _ensure_<name> pattern
