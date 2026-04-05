@@ -169,6 +169,10 @@ install_github() {
             case "$lang" in
                 Go)     install_github_go "$repo" "$tree" && return 0 ;;
                 Python) install_github_python "$repo" "$tree" && return 0 ;;
+                "")
+                    install_github_go "$repo" "$tree" && return 0
+                    install_github_python "$repo" "$tree" && return 0
+                    ;;
             esac
             install_github_script "$repo" "$tree" && return 0
             return 1
