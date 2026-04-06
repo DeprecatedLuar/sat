@@ -48,9 +48,16 @@ install_with_fallback() {
     _INSTALL_SOURCE=""
 
     for source in "${INSTALL_ORDER[@]}"; do
-        try_source "$tool" "$source" >/dev/null 2>&1 &
-        spin_with_style "$tool" $! "$source"
-        if wait $!; then
+        local _result
+        if [[ -n "$SAT_DEBUG" ]]; then
+            printf "${C_DIM}[debug] trying %s via %s${C_RESET}\n" "$tool" "$source" >&2
+            try_source "$tool" "$source"; _result=$?
+        else
+            try_source "$tool" "$source" >/dev/null 2>&1 &
+            spin_with_style "$tool" $! "$source"
+            wait $!; _result=$?
+        fi
+        if [[ $_result -eq 0 ]]; then
             # For gh: get result from temp file
             if [[ "$source" == "gh" ]]; then
                 _gh_get_result
@@ -84,6 +91,7 @@ sat_install() {
             --brew)         DEFAULT_SOURCE="brew" ;;
             --nix)          DEFAULT_SOURCE="nix" ;;
             --gh|--github)  DEFAULT_SOURCE="gh" ;;
+            --debug)        export SAT_DEBUG=1 ;;
             *)              SPECS+=("$arg") ;;
         esac
     done
@@ -164,12 +172,18 @@ sat_install() {
                 continue
             fi
 
-            # Other sources - background with spinner
-            local error_file=$(mktemp)
-            try_source "$PROGRAM" "$FORCE_SOURCE" >/dev/null 2>"$error_file" &
-            spin_with_style "$PROGRAM" $! "$FORCE_SOURCE"
-            local install_exit=$?
-            if wait $!; then
+            # Other sources - background with spinner (or synchronous in debug mode)
+            local _forced_result
+            if [[ -n "$SAT_DEBUG" ]]; then
+                printf "${C_DIM}[debug] trying %s via %s${C_RESET}\n" "$PROGRAM" "$FORCE_SOURCE" >&2
+                try_source "$PROGRAM" "$FORCE_SOURCE"; _forced_result=$?
+            else
+                local error_file=$(mktemp)
+                try_source "$PROGRAM" "$FORCE_SOURCE" >/dev/null 2>"$error_file" &
+                spin_with_style "$PROGRAM" $! "$FORCE_SOURCE"
+                wait $!; _forced_result=$?
+            fi
+            if [[ $_forced_result -eq 0 ]]; then
                 local src="$FORCE_SOURCE"
                 local bin_name="$PROGRAM"
                 if [[ "$FORCE_SOURCE" == "gh" ]] && _gh_get_result; then
@@ -180,14 +194,14 @@ sat_install() {
                 status_ok "$bin_name" "$src"
             else
                 # Show actual error if available, otherwise generic message
-                if [[ -s "$error_file" ]]; then
+                if [[ -z "$SAT_DEBUG" ]] && [[ -s "$error_file" ]]; then
                     local error_msg=$(cat "$error_file")
                     status_fail "${error_msg#Error: }"  # Strip "Error: " prefix
                 else
                     status_fail "$PROGRAM not found in $(source_display "$FORCE_SOURCE")"
                 fi
             fi
-            rm -f "$error_file"
+            [[ -z "$SAT_DEBUG" ]] && rm -f "$error_file"
             continue
         fi
 
