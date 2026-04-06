@@ -194,6 +194,9 @@ spin_probe() {
     printf "\r%-50s\r" ""
 }
 
+# Run command quietly (suppressed) unless SAT_DEBUG is set
+_run_quiet() { [[ -n "$SAT_DEBUG" ]] && "$@" || "$@" &>/dev/null; }
+
 # Checkmark and X for completion status
 C_CHECK=$'\033[0;92m✓\033[0m'  # Green checkmark
 C_CROSS=$'\033[0;91m✗\033[0m'  # Red X

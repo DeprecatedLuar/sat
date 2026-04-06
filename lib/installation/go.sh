@@ -7,5 +7,5 @@ install_go() {
     command -v go &>/dev/null || return 1
     local go_pkg="$tool"
     [[ "$go_pkg" != *"."* ]] && go_pkg="github.com/$tool"
-    go install "${go_pkg}@latest" &>/dev/null
+    _run_quiet go install "${go_pkg}@latest"
 }

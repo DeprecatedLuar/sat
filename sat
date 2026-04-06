@@ -21,11 +21,21 @@ _ensure_lib
 source "$SAT_LIBRARY/common.sh"
 source "$SAT_LIBRARY/commands/internal.sh"  # Early load for manifest functions
 
-# Strip --debug flag early (before routing)
+# Strip --debug/--update flags early (before routing)
+_args=()
 for _arg in "$@"; do
-    [[ "$_arg" == "--debug" ]] && export SAT_DEBUG=1
+    if [[ "$_arg" == "--debug" ]]; then export SAT_DEBUG=1
+    elif [[ "$_arg" == "--update" ]]; then export SAT_UPDATE=1
+    else _args+=("$_arg"); fi
 done
-unset _arg
+set -- "${_args[@]}"
+unset _arg _args
+
+if [[ "${SAT_UPDATE:-0}" == "1" ]]; then
+    source "$SAT_LIBRARY/commands/pull.sh"
+    sat_pull
+    exit $?
+fi
 
 # Skip cleanup for internal API calls (prevents recursion)
 [[ "$1" != "internal" ]] && cleanup_orphaned_sessions
@@ -117,6 +127,17 @@ case "$1" in
         sat_pull
         ;;
 
+    update)
+        if [[ -z "$2" || "$2" == "sat" ]]; then
+            source "$SAT_LIBRARY/commands/pull.sh"
+            sat_pull
+        else
+            shift
+            source "$SAT_LIBRARY/commands/update.sh"
+            sat_update "$@"
+        fi
+        ;;
+
     info|which|whereis)
         [[ -z "$2" ]] && { echo "Usage: sat info <program> [program2] ..."; exit 1; }
         shift
@@ -130,53 +151,8 @@ case "$1" in
         ;;
 
     help|--help|-h|"")
-        cat << 'EOF'
-         ,-.
-        / \  `.  __..-,O
-       :   \ --''_..-'.'
-       |    . .-' `. '.
-       :     .     .`.'
-        \     `.  /  ..
-         \      `.   ' .
-          `,       `.   \
-         ,|,`.        `-.\
-        '.||  ``-...__..-`
-         |  |
-         |__|
-         /||\    Usage: sat <command>
-        //||\\
-       // || \\
-    __//__||__\\__
-   '--------------'
-
-Commands:
-  install|i <pkg>     - Install package(s) with optional source
-  source|src <pm>     - Install a package manager (huber, cargo, brew, nix)
-  search <program>    - Find package across sources (--all raw, --wrap full)
-  uninstall|rm <prog> - Remove program installed via sat
-  shell <tool>        - Temp shell with tools, auto-cleanup on exit (requires tmux)
-  deps                - Install sat dependencies (tmux, wget, curl, jq)
-  info <program>      - Source, path, version, shadowed installs (alias: which)
-  list|ls             - List tracked packages (auto-cleans stale entries)
-  track <program>     - Add existing program to manifest for sat management
-  untrack <program>   - Remove from manifest without uninstalling
-  scan                - Scan ecosystem dirs and add all found packages
-  pull                - Refresh sat library from GitHub
-  clone <repo> [dest] - Clone your repo
-
-Source syntax (install/shell):
-  pkg:sys             - System package manager (apt/pacman/etc)
-  pkg:brew            - Homebrew
-  pkg:nix             - Nix profile
-  pkg:rs :rust        - Cargo (Rust)
-  pkg:py :python      - uv (Python)
-  pkg:js :node        - npm (Node)
-  pkg:go              - go install
-
-Examples:
-  sat install fd:rs bat:rs ripgrep:rs
-  sat shell hyperfine:brew cowsay:sys jq
-EOF
+        source "$SAT_LIBRARY/commands/help.sh"
+        sat_help
         ;;
 
     *)

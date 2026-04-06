@@ -38,7 +38,7 @@ install_github_huber() {
 
     command -v huber &>/dev/null || return 1
 
-    huber install "$repo_path" &>/dev/null || return 1
+    _run_quiet huber install "$repo_path" || return 1
 
     # Huber installs to ~/.huber/bin - symlink to ~/.local/bin for PATH access
     local huber_bin="$HOME/.huber/bin/$repo_name"
@@ -61,24 +61,25 @@ install_github_go() {
     command -v go &>/dev/null || return 1
     echo "$tree" | grep -q '^go.mod$' || return 1
 
-    local go_bin go_path
+    local go_bin go_path go_subdir=""
 
     # Check cmd/*/main.go pattern
     go_bin=$(echo "$tree" | grep -oP '^cmd/\K[^/]+(?=/main\.go$)' | head -1)
+    [[ -n "$go_bin" ]] && go_subdir="cmd"
 
     # Check {repo_name}/main.go pattern (subpackage)
     [[ -z "$go_bin" ]] && echo "$tree" | grep -q "^${repo_name}/main\.go$" && go_bin="$repo_name"
 
     # Build go path
     if [[ -n "$go_bin" ]]; then
-        go_path="github.com/$repo_path/$go_bin@latest"
+        go_path="github.com/$repo_path/${go_subdir:+$go_subdir/}$go_bin@latest"
     elif echo "$tree" | grep -q '^main.go$'; then
         go_path="github.com/$repo_path@latest"
     else
         return 1
     fi
 
-    go install "$go_path" &>/dev/null || return 1
+    _run_quiet go install "$go_path" || return 1
     _gh_set_result "${go_bin:-$repo_name}" "go:github.com/$repo_path"
     return 0
 }
@@ -92,7 +93,7 @@ install_github_python() {
     command -v uv &>/dev/null || return 1
     echo "$tree" | grep -qE '^(pyproject.toml|setup.py|setup.cfg)$' || return 1
 
-    uv tool install "git+https://github.com/$repo_path" &>/dev/null || return 1
+    _run_quiet uv tool install "git+https://github.com/$repo_path" || return 1
     _gh_set_result "$repo_name" "uv"
     return 0
 }
@@ -118,7 +119,12 @@ install_github_script() {
     local before=$(for d in "${bin_dirs[@]}"; do ls -1 "$d" 2>/dev/null; done | sort -u)
 
     # Run install script
-    if curl -sfL "$install_url" | bash &>/dev/null; then
+    if [[ -n "$SAT_DEBUG" ]]; then
+        curl -sfL "$install_url" | bash
+    else
+        curl -sfL "$install_url" | bash &>/dev/null
+    fi
+    if [[ $? -eq 0 ]]; then
         # Compare to find new binaries
         local after=$(for d in "${bin_dirs[@]}"; do ls -1 "$d" 2>/dev/null; done | sort -u)
         local new_bin=$(comm -13 <(echo "$before") <(echo "$after") | head -1)

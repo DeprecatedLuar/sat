@@ -5,5 +5,5 @@ install_uv() {
     local tool="$1"
 
     command -v uv &>/dev/null || return 1
-    uv tool install "$tool" &>/dev/null
+    _run_quiet uv tool install "$tool"
 }
