@@ -21,6 +21,12 @@ _ensure_lib
 source "$SAT_LIBRARY/common.sh"
 source "$SAT_LIBRARY/commands/internal.sh"  # Early load for manifest functions
 
+# Strip --debug flag early (before routing)
+for _arg in "$@"; do
+    [[ "$_arg" == "--debug" ]] && export SAT_DEBUG=1
+done
+unset _arg
+
 # Skip cleanup for internal API calls (prevents recursion)
 [[ "$1" != "internal" ]] && cleanup_orphaned_sessions
 
