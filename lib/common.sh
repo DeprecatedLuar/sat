@@ -37,21 +37,21 @@ C_MANUAL_L=$'\033[38;2;210;180;150m'  # Soft tan
 # Map source to color
 source_color() {
     case "$1" in
-        cargo|rust)                  printf '%s' "$C_RUST" ;;
-        npm|node)                    printf '%s' "$C_NODE" ;;
-        uv|pip|python)               printf '%s' "$C_PYTHON" ;;
+        cargo|rust)                    printf '%s' "$C_RUST" ;;
+        npm|node)                      printf '%s' "$C_NODE" ;;
+        uv|pip|python)                 printf '%s' "$C_PYTHON" ;;
         apt|apk|pacman|dnf|pkg|system) printf '%s' "$C_SYSTEM" ;;
-        flatpak|flathub)             printf '%s' "$C_FLATPAK" ;;
-        repo|repo:*|gh|gh:*|github)  printf '%s' "$C_REPO" ;;
-        appimage|appimage:*)         printf '%s' "$C_APPIMAGE" ;;
-        sat)                         printf '%s' "$C_SAT" ;;
-        go|go:*)                     printf '%s' "$C_GO" ;;
-        brew)                        printf '%s' "$C_BREW" ;;
-        nix)                         printf '%s' "$C_NIX" ;;
-        nixos)                       printf '%s' "$C_NIX" ;;
-        manual)                      printf '%s' "$C_MANUAL" ;;
-        unknown)                     printf '%s' "$C_DIM" ;;
-        *)                           printf '%s' "$C_RESET" ;;
+        flatpak|flathub)               printf '%s' "$C_FLATPAK" ;;
+        github)                        printf '%s' "$C_REPO" ;;
+        appimage|appimage:*)           printf '%s' "$C_APPIMAGE" ;;
+        sat)                           printf '%s' "$C_SAT" ;;
+        go|go:*)                       printf '%s' "$C_GO" ;;
+        brew)                          printf '%s' "$C_BREW" ;;
+        nix)                           printf '%s' "$C_NIX" ;;
+        nixos)                         printf '%s' "$C_NIX" ;;
+        manual)                        printf '%s' "$C_MANUAL" ;;
+        unknown)                       printf '%s' "$C_DIM" ;;
+        *)                             printf '%s' "$C_RESET" ;;
     esac
 }
 
@@ -226,8 +226,11 @@ source_display() {
         npm)          echo "node" ;;
         uv)           echo "python" ;;
         cargo)        echo "rust" ;;
-        repo|repo:*)  echo "github" ;;
-        gh|gh:*)      echo "github" ;;
+        repo:*/*)     echo "github" ;;     # Has owner/repo metadata
+        gh:*/*)       echo "github" ;;     # Has owner/repo metadata
+        repo)         echo "unknown" ;;    # Bare repo (no metadata)
+        unknown:*)    echo "unknown" ;;    # Unknown with path
+        unknown)      echo "unknown" ;;    # Bare unknown
         appimage:*)   echo "appimage" ;;
         appimage)     echo "appimage" ;;
         *)            echo "$1" ;;
@@ -241,14 +244,16 @@ source_light() {
         uv|pip|python)                 printf '%s' "$C_PYTHON_L" ;;
         cargo|rust)                    printf '%s' "$C_RUST_L" ;;
         apt|apk|pacman|dnf|pkg|system) printf '%s' "$C_SYSTEM_L" ;;
-        sat|repo|repo:*|gh|gh:*|github) printf '%s' "$C_REPO_L" ;;
+        sat|github)                    printf '%s' "$C_REPO_L" ;;
+        repo:*/*)                      printf '%s' "$C_REPO_L" ;;  # GitHub with metadata
+        gh:*/*)                        printf '%s' "$C_REPO_L" ;;  # GitHub with metadata
         appimage|appimage:*)           printf '%s' "$C_APPIMAGE_L" ;;
         go|go:*)                       printf '%s' "$C_GO_L" ;;
         brew)                          printf '%s' "$C_NIX_L" ;;
         nix)                           printf '%s' "$C_NIX_L" ;;
         nixos)                         printf '%s' "$C_NIX_L" ;;
         manual)                        printf '%s' "$C_MANUAL_L" ;;
-        unknown)                       printf '%s' "$C_DIM" ;;
+        repo|unknown:*|unknown)        printf '%s' "$C_DIM" ;;     # Unknown sources
         *)                             printf '%s' "$C_RESET" ;;
     esac
 }

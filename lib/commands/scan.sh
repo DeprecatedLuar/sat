@@ -5,17 +5,6 @@ sat_scan() {
     echo "Scanning ecosystems..."
 
     # Helper functions (defined first to avoid bash parser issues)
-    is_from_repo() {
-        local bin="$1"
-        local real=$(readlink -f "$bin" 2>/dev/null || echo "$bin")
-        local dir=$(dirname "$real")
-        while [[ "$dir" != "/" && "$dir" != "$HOME" ]]; do
-            [[ -d "$dir/.git" ]] && return 0
-            dir=$(dirname "$dir")
-        done
-        return 1
-    }
-
     is_excluded() {
         local prog="$1" src="$2"
         # Global exclusions
@@ -45,7 +34,16 @@ sat_scan() {
                     xinit|xinput|xlsclients|xprop|xrandr|xrdb|xset|xsetroot|xterm) return 0 ;;
                 esac
                 ;;
-            *)     [[ "$prog" == git-* || "$prog" == scalar || "$prog" == trash-* ]] && return 0 ;;
+            *)
+                # Git infrastructure
+                [[ "$prog" == git-* || "$prog" == scalar || "$prog" == trash-* ]] && return 0
+                # Language servers (infrastructure)
+                case "$prog" in
+                    gopls|rust-analyzer|typescript-language-server|pyright) return 0 ;;
+                esac
+                # sat internal dependencies
+                [[ "$prog" == huber ]] && return 0
+                ;;
         esac
         return 1
     }
@@ -163,12 +161,16 @@ sat_scan() {
         done
     fi
 
-    # Local bin: check for repo-sourced tools
+    # Local bin: detect source or mark as unknown with path (skip symlinks)
     if [[ -d "$HOME/.local/bin" ]]; then
         for bin in "$HOME/.local/bin"/*; do
             [[ ! -x "$bin" ]] && continue
+            [[ -L "$bin" ]] && continue  # Skip symlinks (managed elsewhere)
             prog=$(basename "$bin")
-            is_from_repo "$bin" && _try_add_tool "$prog" "repo" && ((added++))
+            src=$(detect_source "$prog")
+            # If unknown, store the resolved path
+            [[ "$src" == "unknown" ]] && src="unknown:$(readlink -f "$bin" 2>/dev/null || echo "$bin")"
+            _try_add_tool "$prog" "$src" && ((added++))
         done
     fi
 
