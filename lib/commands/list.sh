@@ -71,20 +71,19 @@ sat_list() {
             by_source[$group]+="$prog=$source"$'\n'
         done < "$SAT_MANIFEST"
 
-        # Print in INSTALL_ORDER, then any remaining
-        local printed=()
-        for src in "${INSTALL_ORDER[@]}"; do
-            [[ -z "${by_source[$src]}" ]] && continue
-            while IFS='=' read -r prog source; do
-                [[ -z "$prog" ]] && continue
-                _display_tool "$prog" "$source"
-            done <<< "${by_source[$src]}"
-            printed+=("$src")
+        # Count packages per source
+        declare -A source_counts
+        for src in "${!by_source[@]}"; do
+            source_counts[$src]=$(echo "${by_source[$src]}" | grep -c "=")
         done
 
-        # Print sources not in INSTALL_ORDER (go, manual, unknown, etc)
-        for src in "${!by_source[@]}"; do
-            [[ " ${printed[*]} " =~ " $src " ]] && continue
+        # Sort sources by count (descending)
+        local sorted_sources=($(for src in "${!source_counts[@]}"; do
+            echo "${source_counts[$src]} $src"
+        done | sort -rn | awk '{print $2}'))
+
+        # Display in order of package count
+        for src in "${sorted_sources[@]}"; do
             while IFS='=' read -r prog source; do
                 [[ -z "$prog" ]] && continue
                 _display_tool "$prog" "$source"
