@@ -18,6 +18,7 @@ C_SAT=$'\033[0;36m'       # Cyan - Sat scripts
 C_GO=$'\033[0;96m'        # Bright Cyan - Go
 C_BREW=$'\033[0;93m'      # Bright yellow - Homebrew
 C_NIX=$'\033[38;2;82;119;195m'    # Dark blue #5277C3 - Nix
+C_APPIMAGE=$'\033[38;2;138;98;185m'   # Purple #8A62B9 - AppImage
 C_MANUAL=$'\033[38;2;180;140;100m'  # Warm brown - Manual installs
 
 # Desaturated colors (for item names - pastel tints, closer to white)
@@ -30,6 +31,7 @@ C_REPO_L=$'\033[38;2;180;180;180m'    # Soft gray
 C_GO_L=$'\033[38;2;160;210;210m'      # Soft teal
 C_BREW_L=$'\033[38;2;230;175;130m'    # Soft amber
 C_NIX_L=$'\033[38;2;126;186;228m'     # Light blue #7EBAE4
+C_APPIMAGE_L=$'\033[38;2;188;168;215m'  # Soft lavender
 C_MANUAL_L=$'\033[38;2;210;180;150m'  # Soft tan
 
 # Map source to color
@@ -41,6 +43,7 @@ source_color() {
         apt|apk|pacman|dnf|pkg|system) printf '%s' "$C_SYSTEM" ;;
         flatpak|flathub)             printf '%s' "$C_FLATPAK" ;;
         repo|repo:*|gh|gh:*|github)  printf '%s' "$C_REPO" ;;
+        appimage|appimage:*)         printf '%s' "$C_APPIMAGE" ;;
         sat)                         printf '%s' "$C_SAT" ;;
         go|go:*)                     printf '%s' "$C_GO" ;;
         brew)                        printf '%s' "$C_BREW" ;;
@@ -224,6 +227,8 @@ source_display() {
         cargo)        echo "rust" ;;
         repo|repo:*)  echo "github" ;;
         gh|gh:*)      echo "github" ;;
+        appimage:*)   echo "${1#appimage:}" ;;  # Show repo for appimage:owner/repo
+        appimage)     echo "appimage" ;;
         *)            echo "$1" ;;
     esac
 }
@@ -236,6 +241,7 @@ source_light() {
         cargo|rust)                    printf '%s' "$C_RUST_L" ;;
         apt|apk|pacman|dnf|pkg|system) printf '%s' "$C_SYSTEM_L" ;;
         sat|repo|repo:*|gh|gh:*|github) printf '%s' "$C_REPO_L" ;;
+        appimage|appimage:*)           printf '%s' "$C_APPIMAGE_L" ;;
         go|go:*)                       printf '%s' "$C_GO_L" ;;
         brew)                          printf '%s' "$C_BREW_L" ;;
         nix)                           printf '%s' "$C_NIX_L" ;;
@@ -270,6 +276,7 @@ parse_tool_spec() {
             nix)             _TOOL_SOURCE="nix" ;;
             gh|github)       _TOOL_SOURCE="gh" ;;
             release|rel)     _TOOL_SOURCE="gh-release" ;;
+            appimage)        _TOOL_SOURCE="gh-appimage" ;;
             script|sh)       _TOOL_SOURCE="gh-script" ;;
             *)               _TOOL_SOURCE="$src" ;;
         esac
@@ -425,6 +432,10 @@ pkg_remove() {
         repo:*)  rm -f "$HOME/.local/bin/$pkg" ;;
         gh:*)
             rm -f "$HOME/.local/bin/$pkg" "$HOME/bin/$pkg" 2>/dev/null
+            ;;
+        appimage:*)
+            rm -f "$HOME/.local/bin/$pkg"  # Remove symlink
+            rm -f "$HOME/.local/share/sat/bin/appimages/$pkg"  # Remove AppImage
             ;;
         system)  # Generic system - use cached package manager
             local mgr="$SAT_PKG_MANAGER"

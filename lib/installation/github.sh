@@ -8,9 +8,18 @@ _GH_RESULT_FILE="/tmp/sat-gh-result-$$"
 _fetch_tree() {
     local repo="$1"
     local tree
-    tree=$(curl -s "https://api.github.com/repos/$repo/git/trees/main?recursive=1" | jq -r '.tree[].path' 2>/dev/null)
-    [[ -z "$tree" || "$tree" == "null" ]] && \
-        tree=$(curl -s "https://api.github.com/repos/$repo/git/trees/master?recursive=1" | jq -r '.tree[].path' 2>/dev/null)
+
+    # Use gh CLI if authenticated, else curl
+    if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+        tree=$(gh api "repos/$repo/git/trees/main?recursive=1" 2>/dev/null | jq -r '.tree[].path' 2>/dev/null)
+        [[ -z "$tree" || "$tree" == "null" ]] && \
+            tree=$(gh api "repos/$repo/git/trees/master?recursive=1" 2>/dev/null | jq -r '.tree[].path' 2>/dev/null)
+    else
+        tree=$(curl -s "https://api.github.com/repos/$repo/git/trees/main?recursive=1" | jq -r '.tree[].path' 2>/dev/null)
+        [[ -z "$tree" || "$tree" == "null" ]] && \
+            tree=$(curl -s "https://api.github.com/repos/$repo/git/trees/master?recursive=1" | jq -r '.tree[].path' 2>/dev/null)
+    fi
+
     echo "$tree"
 }
 
@@ -98,7 +107,101 @@ install_github_python() {
     return 0
 }
 
-# --- Method 4: Run install.sh from repo ---
+# --- Method 4: AppImage (portable GUI apps) ---
+# Downloads AppImage from GitHub releases and installs to sat's bin directory
+install_github_appimage() {
+    local repo_path="$1"
+    local repo_name="${repo_path##*/}"
+
+    [[ -n "$SAT_DEBUG" ]] && echo "[debug]   trying appimage for $repo_path" >&2
+
+    # Detect platform
+    local arch=$(uname -m)
+    local arch_pattern=""
+    case "$arch" in
+        x86_64)  arch_pattern="(amd64|x86_64)" ;;
+        aarch64) arch_pattern="(arm64|aarch64)" ;;
+        armv7l)  arch_pattern="(armhf|armv7)" ;;
+        *)
+            [[ -n "$SAT_DEBUG" ]] && echo "[debug]   unsupported architecture: $arch" >&2
+            return 1
+            ;;
+    esac
+
+    # Fetch latest release assets (use gh CLI if authenticated, else curl)
+    [[ -n "$SAT_DEBUG" ]] && echo "[debug]   fetching releases from GitHub API..." >&2
+    local release_data
+    if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+        [[ -n "$SAT_DEBUG" ]] && echo "[debug]   using authenticated gh CLI" >&2
+        release_data=$(gh api "repos/$repo_path/releases/latest" 2>/dev/null)
+    else
+        [[ -n "$SAT_DEBUG" ]] && echo "[debug]   using unauthenticated curl (may hit rate limits)" >&2
+        release_data=$(curl -s "https://api.github.com/repos/$repo_path/releases/latest")
+    fi
+
+    # Check for rate limit error
+    if echo "$release_data" | jq -e '.message' 2>/dev/null | grep -q "rate limit"; then
+        echo "Error: GitHub API rate limit exceeded" >&2
+        echo "Tip: Authenticate with 'gh auth login' for higher limits" >&2
+        return 1
+    fi
+    local assets=$(echo "$release_data" | jq -r '.assets[]? | select(.name | endswith(".AppImage")) | .name + "|" + .browser_download_url')
+
+    if [[ -z "$assets" ]]; then
+        [[ -n "$SAT_DEBUG" ]] && echo "[debug]   no AppImage assets found" >&2
+        return 1
+    fi
+
+    [[ -n "$SAT_DEBUG" ]] && echo "[debug]   found AppImage assets, filtering for $arch_pattern..." >&2
+
+    # Filter for matching architecture
+    local asset_url=$(echo "$assets" | grep -iE "$arch_pattern" | head -1 | cut -d'|' -f2)
+    local asset_name=$(echo "$assets" | grep -iE "$arch_pattern" | head -1 | cut -d'|' -f1)
+
+    if [[ -z "$asset_url" ]]; then
+        [[ -n "$SAT_DEBUG" ]] && echo "[debug]   no matching AppImage for architecture" >&2
+        return 1
+    fi
+
+    [[ -n "$SAT_DEBUG" ]] && echo "[debug]   selected: $asset_name" >&2
+
+    # Extract clean app name from filename
+    local name="${asset_name%.AppImage}"
+    local app_name=$(echo "$name" | sed -E 's/[_-]([0-9]+\.[0-9]|v?[0-9]+).*//')
+
+    # Fallback to repo name if extraction failed
+    [[ -z "$app_name" ]] && app_name="$repo_name"
+
+    # Lowercase normalization
+    app_name="${app_name,,}"
+
+    # Install to sat's AppImage directory
+    local appimage_dir="$HOME/.local/share/sat/bin/appimages"
+    local appimage_path="$appimage_dir/$app_name"
+    local symlink_path="$HOME/.local/bin/$app_name"
+
+    [[ -n "$SAT_DEBUG" ]] && echo "[debug]   downloading to $appimage_path..." >&2
+    mkdir -p "$appimage_dir"
+    _run_quiet curl -L -o "$appimage_path" "$asset_url" || {
+        [[ -n "$SAT_DEBUG" ]] && echo "[debug]   download failed" >&2
+        return 1
+    }
+    chmod +x "$appimage_path"
+
+    # Symlink to PATH
+    [[ -n "$SAT_DEBUG" ]] && echo "[debug]   creating symlink $symlink_path" >&2
+    ln -sf "$appimage_path" "$symlink_path"
+
+    [[ -n "$SAT_DEBUG" ]] && echo "[debug]   appimage install successful: $app_name" >&2
+    _gh_set_result "$app_name" "appimage:$repo_path"
+    return 0
+}
+
+# --- Method 5: Portable tarballs ---
+# TODO: Extract portable .tar.gz releases when AppImage is not available
+# Similar to AppImage but with extraction logic to find the binary
+
+# --- Method 6: Run install.sh from repo ---
 # Snapshots ~/.local/bin before/after to detect installed binary name
 install_github_script() {
     local repo_path="$1"
@@ -149,6 +252,8 @@ install_github() {
     local input="$1"
     local method="${2:-auto}"
 
+    [[ -n "$SAT_DEBUG" ]] && echo "[debug]   install_github called: input=$input, method=$method" >&2
+
     local repo lang tree
 
     # Clean any stale result file
@@ -157,21 +262,35 @@ install_github() {
     # Handle direct repo path vs search
     if [[ "$input" == */* ]]; then
         repo="$input"
+        [[ -n "$SAT_DEBUG" ]] && echo "[debug]   direct repo path: $repo" >&2
     else
+        [[ -n "$SAT_DEBUG" ]] && echo "[debug]   searching GitHub for: $input" >&2
         local gh_data=$(search_github "$input" 1)
         repo=$(echo "$gh_data" | jq -r '.items[0].full_name // empty')
         lang=$(echo "$gh_data" | jq -r '.items[0].language // empty')
-        [[ -z "$repo" ]] && return 1
+        if [[ -z "$repo" ]]; then
+            [[ -n "$SAT_DEBUG" ]] && echo "[debug]   search returned no results" >&2
+            return 1
+        fi
+        [[ -n "$SAT_DEBUG" ]] && echo "[debug]   found repo: $repo (language: $lang)" >&2
     fi
 
     # Fetch tree (needed for script and language detection)
+    [[ -n "$SAT_DEBUG" ]] && echo "[debug]   fetching repo tree..." >&2
     tree=$(_fetch_tree "$repo")
-    [[ -z "$tree" || "$tree" == "null" ]] && return 1
+    if [[ -z "$tree" || "$tree" == "null" ]]; then
+        [[ -n "$SAT_DEBUG" ]] && echo "[debug]   tree fetch failed" >&2
+        return 1
+    fi
 
     case "$method" in
         auto)
-            # Full fallback: huber → language → script
+            # Full fallback: huber → appimage → language → script
+            [[ -n "$SAT_DEBUG" ]] && echo "[debug]   trying huber..." >&2
             install_github_huber "$repo" && return 0
+            [[ -n "$SAT_DEBUG" ]] && echo "[debug]   huber failed, trying appimage..." >&2
+            install_github_appimage "$repo" && return 0
+            [[ -n "$SAT_DEBUG" ]] && echo "[debug]   appimage failed, trying language-based install..." >&2
             case "$lang" in
                 Go)     install_github_go "$repo" "$tree" && return 0 ;;
                 Python) install_github_python "$repo" "$tree" && return 0 ;;
@@ -180,12 +299,16 @@ install_github() {
                     install_github_python "$repo" "$tree" && return 0
                     ;;
             esac
+            [[ -n "$SAT_DEBUG" ]] && echo "[debug]   language install failed, trying install.sh..." >&2
             install_github_script "$repo" "$tree" && return 0
             return 1
             ;;
         release)
             command -v huber &>/dev/null || { echo "huber required for :rel installs (sat source huber)" >&2; return 1; }
             install_github_huber "$repo"
+            ;;
+        appimage)
+            install_github_appimage "$repo"
             ;;
         script)
             install_github_script "$repo" "$tree"

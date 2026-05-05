@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # update.sh - Update packages installed via sat
 
+# Source GitHub installation for AppImage updates
+source "$SAT_LIB/installation/github.sh"
+
 _update_tool() {
     local tool="$1"
     local source
@@ -49,6 +52,17 @@ _update_tool() {
                 return 1
             }
             _run_quiet huber update "${source#gh:}" && ok=1
+            ;;
+        appimage:*)
+            # Re-install AppImage from GitHub releases
+            local repo="${source#appimage:}"
+            # Remove old version first
+            rm -f "$HOME/.local/bin/$tool"
+            rm -f "$HOME/.local/share/sat/bin/appimages/$tool"
+            # Re-download latest
+            if install_github_appimage "$repo"; then
+                ok=1
+            fi
             ;;
         sat|repo:*)
             printf "[${C_CROSS}] %-25s ${C_DIM}cannot update source '%s'${C_RESET}\n" "$tool" "$source"

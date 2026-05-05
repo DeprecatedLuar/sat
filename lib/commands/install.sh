@@ -31,9 +31,10 @@ try_source() {
         nix)    install_nix "$tool" ;;
         system) install_system "$tool" ;;
         sat)    install_sat "$tool" ;;
-        gh)         install_github "$tool" "auto" ;;
-        gh-release) install_github "$tool" "release" ;;
-        gh-script)  install_github "$tool" "script" ;;
+        gh)          install_github "$tool" "auto" ;;
+        gh-release)  install_github "$tool" "release" ;;
+        gh-appimage) install_github "$tool" "appimage" ;;
+        gh-script)   install_github "$tool" "script" ;;
         *)
             return 1
             ;;

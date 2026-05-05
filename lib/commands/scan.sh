@@ -118,6 +118,16 @@ sat_scan() {
         done
     fi
 
+    # AppImages: scan sat's appimage directory
+    local appimage_dir="$HOME/.local/share/sat/bin/appimages"
+    if [[ -d "$appimage_dir" ]]; then
+        for bin in "$appimage_dir"/*; do
+            [[ ! -x "$bin" ]] && continue
+            prog=$(basename "$bin")
+            _try_add_tool "$prog" "appimage" && ((added++))
+        done
+    fi
+
     # Local bin: check for repo-sourced tools
     if [[ -d "$HOME/.local/bin" ]]; then
         for bin in "$HOME/.local/bin"/*; do

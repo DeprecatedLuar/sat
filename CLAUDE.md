@@ -29,7 +29,7 @@ lib/
 └── installation/          # Modular installers (one per package manager)
     ├── brew.sh            # install_brew()
     ├── cargo.sh           # install_cargo()
-    ├── github.sh          # install_from_github(), language-based routing
+    ├── github.sh          # install_from_github(), AppImage, language-based routing
     ├── go.sh              # install_go()
     ├── nix.sh             # install_nix()
     ├── npm.sh             # install_npm()
@@ -69,6 +69,8 @@ Shell installs (isolated-first):
 ```
 ~/.local/share/sat/
 ├── manifest                    # System manifest (permanent): tool=source
+├── bin/
+│   └── appimages/              # AppImage storage (symlinked to ~/.local/bin/)
 └── shell/
     ├── manifest                # Master manifest (sessions): tool:source:pid
     └── $PID/                   # Session folder
@@ -247,6 +249,7 @@ sat install <pkg>:js           # Force npm (alias: :node)
 sat install <pkg>:go           # Force go install
 sat install <pkg>:gh           # Force GitHub search + install
 sat install <pkg>:rel          # Force GitHub release binary (alias: :release)
+sat install <pkg>:appimage     # Force AppImage from GitHub releases
 sat install <pkg>:sh           # Force GitHub install.sh script (alias: :script)
 sat install owner/repo         # Direct GitHub repo install
 
@@ -274,7 +277,19 @@ sat --debug <command>   # Show raw installer output instead of suppressing it
 sat --update            # Alias for sat pull (self-update)
 ```
 
-## Testing
+## Development
+
+**Library development:**
+The sat binary uses `~/.local/share/sat/lib/` for the library. For active development, symlink to your dev directory:
+
+```bash
+rm -rf ~/.local/share/sat/lib
+ln -s ~/Workspace/dev/sat/lib ~/.local/share/sat/lib
+```
+
+Changes to library files are now immediately active when running `sat` commands.
+
+**Testing:**
 
 ```bash
 # Test shell + cleanup
@@ -294,6 +309,12 @@ sat shell ripgrep:cargo
 sat install ripgrep                   # Promotes to system
 exit
 sat which ripgrep                     # Still installed (system manifest)
+
+# Test AppImage installation
+sat install dorion                    # Auto-fallback finds AppImage
+sat list | grep dorion                # Verify tracking
+ls ~/.local/share/sat/bin/appimages/  # Verify storage
+sat uninstall dorion                  # Test cleanup
 ```
 
 ## Code Patterns & Best Practices
@@ -308,6 +329,22 @@ _run_quiet cargo install "$tool"   # suppressed normally, visible with --debug
 ```
 
 This allows `sat --debug <command>` to expose raw installer output for troubleshooting.
+
+### Debug Output
+
+When `SAT_DEBUG` is set (via `sat --debug`), functions should output diagnostic information to stderr:
+
+```bash
+[[ -n "$SAT_DEBUG" ]] && echo "[debug] trying appimage for $repo_path" >&2
+```
+
+**Debug output conventions:**
+- Use `[debug]` prefix for all debug messages
+- Indent with spaces to show call hierarchy: `[debug]   nested call`
+- Write to stderr (`>&2`) to avoid polluting stdout
+- Show fallback chain: "trying X...", "X failed, trying Y..."
+- Include key decisions: architecture detection, asset selection, auth method
+- Export `SAT_DEBUG` so it propagates to subprocesses and sourced scripts
 
 ### Bash Parser Limitations
 
@@ -388,10 +425,24 @@ In files with nested functions:
 
 ## Dependencies
 
-- `tmux` - Required for shell isolation
+**Core (required):**
+- `tmux` - Shell isolation
 - `jq` - JSON parsing for API responses
 - `curl` - HTTP requests
-- Optional: cargo, uv, npm, go, brew, nix for respective sources
+
+**Recommended:**
+- `gh` (GitHub CLI) - Authenticated API access, avoids rate limits
+  - Install: `sat source huber && huber install cli/cli`
+  - Authenticate: `gh auth login`
+
+**Optional (per source):**
+- `cargo` - Rust package installation
+- `uv` - Python package installation
+- `npm` - Node.js package installation
+- `go` - Go package installation
+- `brew` - Homebrew package manager
+- `nix` - Nix package manager
+- `huber` - GitHub release binary manager
 
 Run `sat deps` to install core dependencies.
 
@@ -407,12 +458,27 @@ The tool sources scripts from a remote repository for OS detection and bootstrap
 
 When installing from GitHub (`sat install owner/repo` or `<pkg>:gh`):
 
-1. **Search** returns repo + language from GitHub API
-2. **Huber** tried first (prebuilt release binaries)
-3. **Language-based routing** if Huber fails:
+**Automatic fallback chain (`install_github` with `method=auto`):**
+1. **Huber** - Prebuilt release binaries (requires `huber` installed)
+2. **AppImage** - Portable GUI apps from GitHub releases
+3. **Language-based routing** - Build from source based on repo language:
    - `Go` → `go install`
    - `Python` → `uv tool install`
-4. **Script** fallback - run install.sh if present
+4. **Script** - Run `install.sh` if present in repo
+
+**AppImage installation (`install_github_appimage`):**
+- Platform detection: x86_64, aarch64, armv7l
+- Filters release assets for matching architecture (amd64/x86_64, arm64/aarch64, etc.)
+- Downloads to `~/.local/share/sat/bin/appimages/`
+- Creates symlink in `~/.local/bin/` with cleaned name (lowercase, version stripped)
+- Manifest: `tool=appimage:owner/repo`
+- Example: `Dorion_6.12.2_amd64.AppImage` → `~/.local/bin/dorion`
+
+**GitHub API authentication:**
+- Uses `gh api` (GitHub CLI) when authenticated → higher rate limits
+- Falls back to `curl` when `gh` not installed or not authenticated
+- Rate limit errors show helpful message: "Authenticate with 'gh auth login'"
+- Pattern applies to all GitHub API calls (search, releases, tree fetch)
 
 Search functions in `search.sh` are reused by both `sat search` and install.
 
