@@ -16,12 +16,16 @@ sat (router + offline commands)
 └── [ROUTER]               # Routes to library for online commands
 
 lib/
-├── common.sh              # Shared utilities, manifests, cleanup functions
-├── install.sh             # sat_install() - orchestrates installation
-│   └── _track_install()   # Routes manifest writes based on SAT_MANIFEST_TARGET
-├── search.sh              # sat_search() + per-ecosystem search functions
-├── shell.sh               # sat_shell() - thin wrapper around sat_install
-│   └── shell_cleanup()    # Cleanup on session exit
+├── common.sh              # Shared utilities, manifests, cleanup functions, _run_quiet()
+├── commands/
+│   ├── install.sh         # sat_install() + _track_install() (manifest routing)
+│   ├── search.sh          # sat_search() + per-ecosystem search functions
+│   ├── shell.sh           # sat_shell() - thin wrapper around sat_install
+│   ├── pull.sh            # sat_pull() - refresh lib + binary from GitHub
+│   ├── update.sh          # sat_update() - upgrade tracked packages via source
+│   ├── clone.sh           # sat_clone() - clone repos (short name uses cached GitHub user)
+│   ├── internal.sh        # sat_internal() - manifest API entry point
+│   └── ...                # list, scan, uninstall, track, untrack, info, deps, help
 └── installation/          # Modular installers (one per package manager)
     ├── brew.sh            # install_brew()
     ├── cargo.sh           # install_cargo()
@@ -41,8 +45,8 @@ Shell delegates installation to `sat_install`, only handling:
 - **Cleanup**: Removes tools and configs on exit
 
 ### Binary vs Library Split
-- **Binary**: Offline-capable commands (list, scan, uninstall, track, which, info)
-- **Library**: Internet-dependent commands (install, search, shell)
+- **Binary**: Offline-capable commands (list, scan, uninstall, track, which, info) + router + `_ensure_lib()`
+- **Library**: Internet-dependent commands (install, search, shell, pull, update, clone)
 
 ### Installation Fallback Chain
 Permanent installs (user-space first):
@@ -248,6 +252,8 @@ sat install owner/repo         # Direct GitHub repo install
 
 sat shell <pkg>[:source] ...   # Ephemeral shell with tools
 sat uninstall <pkg>            # Remove and update manifest
+sat update <pkg>               # Upgrade tracked package via its source
+sat update sat                 # Self-update: refresh lib + binary (alias: sat pull, sat --update)
 sat list                       # Show sessions + system tools
 sat scan                       # Scan ecosystems, skip session tools
 sat which <pkg>                # Show all installations across sources
@@ -257,6 +263,15 @@ sat untrack <pkg>              # Remove from manifest without uninstalling
 sat source <pm>                # Install a package manager (huber, cargo, brew, nix)
 sat search <pkg>               # Cross-ecosystem package search
 sat search <pkg>:gh            # Search specific source (gh, cargo, npm, etc.)
+sat pull                       # Refresh lib + binary from GitHub
+sat clone <repo>               # Clone repo (short name uses cached GitHub username)
+```
+
+## Flags
+
+```bash
+sat --debug <command>   # Show raw installer output instead of suppressing it
+sat --update            # Alias for sat pull (self-update)
 ```
 
 ## Testing
@@ -282,6 +297,17 @@ sat which ripgrep                     # Still installed (system manifest)
 ```
 
 ## Code Patterns & Best Practices
+
+### Output Suppression
+
+All installer commands must use `_run_quiet` (defined in `common.sh`) instead of `&>/dev/null`:
+
+```bash
+_run_quiet cargo install "$tool"   # suppressed normally, visible with --debug
+# NOT: cargo install "$tool" &>/dev/null
+```
+
+This allows `sat --debug <command>` to expose raw installer output for troubleshooting.
 
 ### Bash Parser Limitations
 

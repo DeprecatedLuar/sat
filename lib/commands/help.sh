@@ -30,6 +30,7 @@ Commands:
   track <program>     - Add existing program to manifest for sat management
   untrack <program>   - Remove from manifest without uninstalling
   scan                - Scan ecosystem dirs and add all found packages
+  outdated            - Show available updates for tracked packages
   pull                - Refresh sat library from GitHub
   clone <repo> [dest] - Clone your repo
 
