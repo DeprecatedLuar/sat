@@ -21,149 +21,77 @@ lib/
 │   ├── install.sh         # sat_install() + _track_install() (manifest routing)
 │   ├── search.sh          # sat_search() + per-ecosystem search functions
 │   ├── shell.sh           # sat_shell() - thin wrapper around sat_install
-│   ├── pull.sh            # sat_pull() - refresh lib + binary from GitHub
-│   ├── update.sh          # sat_update() - upgrade tracked packages via source
-│   ├── clone.sh           # sat_clone() - clone repos (short name uses cached GitHub user)
-│   ├── internal.sh        # sat_internal() - manifest API entry point
-│   └── ...                # list, scan, uninstall, track, untrack, info, deps, help
+│   └── ...                # pull, update, clone, internal, list, scan, uninstall, etc.
 └── installation/          # Modular installers (one per package manager)
-    ├── brew.sh            # install_brew()
-    ├── cargo.sh           # install_cargo()
     ├── github.sh          # install_from_github(), AppImage, language-based routing
-    ├── go.sh              # install_go()
-    ├── nix.sh             # install_nix()
-    ├── npm.sh             # install_npm()
-    ├── sat.sh             # install_sat()
-    ├── system.sh          # install_system()
-    └── uv.sh              # install_uv()
+    └── ...                # brew, cargo, go, nix, npm, sat, system, uv
 ```
 
-### Shell as Thin Wrapper
-Shell delegates installation to `sat_install`, only handling:
-- **Isolation**: tmux session, XDG overrides, session directories
-- **Context**: Sets `SAT_MANIFEST_TARGET=session` for manifest routing
-- **Cleanup**: Removes tools and configs on exit
+### Key Concepts
 
-### Binary vs Library Split
+**Shell as Thin Wrapper:**
+Shell delegates to `sat_install`, only handling:
+- Isolation (tmux session, XDG overrides, session directories)
+- Context (sets `SAT_MANIFEST_TARGET=session` for manifest routing)
+- Cleanup (removes tools and configs on exit)
+
+**Binary vs Library Split:**
 - **Binary**: Offline-capable commands (list, scan, uninstall, track, which, info) + router + `_ensure_lib()`
 - **Library**: Internet-dependent commands (install, search, shell, pull, update, clone)
 
-### Installation Fallback Chain
-Permanent installs (user-space first):
-1. brew
-2. nix
-3. system (apt/pacman/dnf/apk)
-4. cargo
-5. uv (Python)
-6. npm
-7. sat (wrapper scripts)
-8. gh (GitHub)
-
-Shell installs (isolated-first):
-1. brew, nix, cargo, uv (user-space)
-2. system
-3. npm, repo, sat
+**Installation Fallback Chain:**
+- Permanent: brew → nix → system → cargo → uv → npm → sat → gh
+- Shell: brew/nix/cargo/uv → system → npm/repo/sat
 
 ## Data Storage
 
 ```
 ~/.local/share/sat/
-├── manifest                    # System manifest (permanent): tool=source
-├── bin/
-│   └── appimages/              # AppImage storage (symlinked to ~/.local/bin/)
+├── manifest                    # System manifest: tool=source
+├── bin/appimages/              # AppImage storage (symlinked to ~/.local/bin/)
 └── shell/
-    ├── manifest                # Master manifest (sessions): tool:source:pid
-    └── $PID/                   # Session folder
+    ├── manifest                # Master manifest: tool:source:pid
+    └── $PID/
         ├── manifest            # Session manifest: TOOL=x, SOURCE_x=y
-        ├── snapshot-before     # Config snapshot before session
-        └── snapshot-after      # Config snapshot after session
+        └── snapshot-*          # Config snapshots
 
 /tmp/sat-$PID/                  # XDG override (ephemeral)
-└── {config,data,cache,state}
 ```
 
 ### Manifest Types
+
 | Manifest | Location | Format | Purpose |
 |----------|----------|--------|---------|
 | System | `sat/manifest` | `tool=source` | Permanent installs via `sat install` |
 | Master | `sat/shell/manifest` | `tool:source:pid` | All active session tools |
 | Session | `sat/shell/$PID/manifest` | `TOOL=x`, `SOURCE_x=y` | Per-session details |
 
-### Key Rules
-- **System vs Master isolation**: A `tool:source` combo lives in ONE manifest only
-- **Promotion**: `sat install` moves tool from master → system
-- **sat scan**: Skips any tool in master manifest (prevents pollution)
-- **Cleanup**: Master manifest is source of truth for orphan cleanup
+**Key Rules:**
+- A `tool:source` combo lives in ONE manifest only (system XOR master)
+- `sat install` promotes tool from master → system
+- `sat scan` skips tools in master manifest (prevents pollution)
+- Master manifest is source of truth for orphan cleanup
 
 ## Session Lifecycle
 
-Shell is a thin wrapper around `sat_install`. It handles isolation and cleanup, delegating all installation logic to the existing system.
+**Manifest Routing:**
+`SAT_MANIFEST_TARGET` env var controls where `_track_install()` writes:
+- Unset (default): System manifest (permanent)
+- `session`: Session + master manifest (temporary)
 
-### Manifest Routing via Environment Variable
+Shell sets `SAT_MANIFEST_TARGET=session` before calling `sat_install`, routing the same installation logic to different manifests based on context.
 
-The `SAT_MANIFEST_TARGET` env var controls where `_track_install()` writes:
-- **Unset** (default): System manifest (permanent installs)
-- **`session`**: Session + master manifest (temporary, cleaned on exit)
+**Starting:** Check tmux → cache sudo if `:sys` tools → create dirs + XDG temp → snapshot configs → spawn tmux with rcfile that sets env vars and calls `sat_install`
 
-Shell sets `SAT_MANIFEST_TARGET=session` before calling `sat_install`, so the same installation logic routes to different manifests based on context.
+**Clean exit:** `shell_cleanup()` checks each tool (shared with other sessions? promoted?), removes unshared tools, cleans configs via snapshot diff, deletes session dir
 
-### Starting a shell
-1. Check for tmux
-2. Cache sudo if any `:sys` tools requested
-3. Create session dir + XDG temp
-4. Take config snapshot
-5. Spawn tmux with rcfile that:
-   - Sets `SAT_MANIFEST_TARGET=session` and `SAT_SESSION=$$`
-   - Calls `sat_install` for requested tools
-6. Tools written to session manifest + master manifest (via env var routing)
-
-### Clean exit (`exit`)
-1. `shell_cleanup()` runs in shell.sh
-2. Check each tool: other sessions using it? promoted to system?
-3. Remove tools not shared/promoted
-4. Clean configs via snapshot diff
-5. Delete session dir + XDG temp
-
-### Orphan cleanup (crash/kill)
-1. `cleanup_orphaned_sessions()` runs on every sat command
-2. Scan master manifest for dead PIDs
-3. Cache sudo if system packages need removal
-4. For each dead PID: `cleanup_session()` handles everything
+**Orphan cleanup:** `cleanup_orphaned_sessions()` runs on every sat command, scans master manifest for dead PIDs, runs `cleanup_session()` for each
 
 ## Internal Manifest API
 
-The binary exposes an internal API for manifest manipulation. This API is used by lib files when they run remotely (e.g., inside tmux sessions) and ensures all manifest operations go through a single source of truth.
+The binary exposes `sat internal <subcommand>` for manifest manipulation. Lib files use this API when running remotely (e.g., inside tmux sessions) to ensure all manifest operations go through a single source of truth.
 
-**Important**: This API is internal/undocumented for users. Lib files call it via wrappers in common.sh.
-
-### API Commands
-
-```bash
-# sat-manifest (system manifest: ~/.local/share/sat/manifest)
-sat internal sat-manifest add <tool> <source>     # Add/update entry
-sat internal sat-manifest get <tool>              # Get source (stdout)
-sat internal sat-manifest remove <tool>           # Remove entry
-sat internal sat-manifest has <tool>              # Exit 0 if exists
-sat internal sat-manifest list                    # Dump all entries
-
-# shell-manifest (master manifest: ~/.local/share/sat/shell/manifest)
-sat internal shell-manifest add <tool> <source> <pid>   # Add session entry
-sat internal shell-manifest pids <tool> <source>        # Get PIDs for tool:source
-sat internal shell-manifest has <tool>                  # Exit 0 if tool exists
-sat internal shell-manifest remove <tool> <source> <pid> # Remove specific entry
-sat internal shell-manifest remove-all <tool>           # Remove all entries for tool
-sat internal shell-manifest promote <tool> <source>     # Move to system manifest
-sat internal shell-manifest list                        # Dump all entries
-
-# pid-manifest (session manifest: ~/.local/share/sat/shell/$PID/manifest)
-sat internal pid-manifest add <pid> <tool> <source>   # Add tool to session
-sat internal pid-manifest tools <pid>                  # List tools in session
-sat internal pid-manifest source <pid> <tool>          # Get source for tool
-sat internal pid-manifest remove <pid>                 # Delete session folder
-```
-
-### Architecture
-
+**Architecture:**
 ```
 Binary (sat)
 ├── _sat_manifest_*()      # Internal functions (fast, in-process)
@@ -177,215 +105,75 @@ common.sh (wrappers)
 └── pid_manifest_*()
 
 lib/*.sh
-└── Call wrapper functions (works both in binary context and remote)
+└── Call wrapper functions (works in binary context and remote)
 ```
 
-When binary runs: wrappers detect `_*` functions exist → use directly (no subprocess)
+When binary runs: wrappers use `_*` functions directly (no subprocess)
 When lib runs in tmux: `_*` functions don't exist → fall back to `sat internal ...`
 
-### Future: Remote Library Model
-
-The library (`lib/*.sh`) is designed to eventually be hosted remotely and executed via `curl | bash`. In this model:
-- **Binary**: Only the `sat` binary is installed locally
-- **Library**: Fetched and executed on-demand from the repository
-- **Manifest API**: Library calls `sat internal ...` for all manifest operations (no local function access)
-
-This architecture is already in place — the wrappers automatically fall back to the API when `_*` functions aren't available.
-
-## Key Functions
-
-### Installation (install.sh)
-```bash
-try_source()            # Try installing from specific source
-install_with_fallback() # Try sources in INSTALL_ORDER until one works
-sat_install()           # Main install entry point
-_track_install()        # Routes to system or session manifest based on SAT_MANIFEST_TARGET
-```
-
-### Manifest helpers (common.sh wrappers)
-```bash
-# System manifest (sat-manifest)
-manifest_add()      # Add tool=source
-manifest_get()      # Get source for tool
-manifest_remove()   # Remove tool
-manifest_has()      # Check if tool exists
-
-# Master manifest (shell-manifest)
-master_add()        # Add tool:source:pid
-master_has_tool()   # Check if tool exists (any source)
-master_remove()     # Remove specific tool:source:pid
-master_promote()    # Move tool:source from master → system
-
-# Session manifest (pid-manifest)
-pid_manifest_add()    # Add tool to session
-pid_manifest_tools()  # List tools in session
-pid_manifest_source() # Get source for tool in session
-pid_manifest_remove() # Delete session folder
-```
-
-### Session cleanup (common.sh)
-```bash
-session_remove_tool()       # Remove one tool: pkg_remove + master_remove
-cleanup_session()           # Full session: configs + tools + folders
-cleanup_orphaned_sessions() # Find dead PIDs, cleanup each
-```
-
-### Snapshot cleanup (common.sh)
-```bash
-take_snapshot()             # Capture ~/.config, ~/.local/share, etc.
-cleanup_session_configs()   # Diff before/after, remove matching tool dirs
-```
-
-## Commands
-
-```bash
-sat install <pkg>              # Install (promotes from master if exists)
-sat install <pkg>:sys          # Force system package manager
-sat install <pkg>:brew         # Force homebrew
-sat install <pkg>:nix          # Force nix
-sat install <pkg>:rs           # Force cargo (alias: :rust)
-sat install <pkg>:py           # Force uv/python (alias: :python)
-sat install <pkg>:js           # Force npm (alias: :node)
-sat install <pkg>:go           # Force go install
-sat install <pkg>:gh           # Force GitHub search + install
-sat install <pkg>:rel          # Force GitHub release binary (alias: :release)
-sat install <pkg>:appimage     # Force AppImage from GitHub releases
-sat install <pkg>:sh           # Force GitHub install.sh script (alias: :script)
-sat install owner/repo         # Direct GitHub repo install
-
-sat shell <pkg>[:source] ...   # Ephemeral shell with tools
-sat uninstall <pkg>            # Remove and update manifest
-sat update <pkg>               # Upgrade tracked package via its source
-sat update sat                 # Self-update: refresh lib + binary (alias: sat pull, sat --update)
-sat list                       # Show sessions + system tools
-sat scan                       # Scan ecosystems, skip session tools
-sat which <pkg>                # Show all installations across sources
-sat info <pkg>                 # Detailed info (source, path, version)
-sat track <pkg>                # Add existing program to manifest
-sat untrack <pkg>              # Remove from manifest without uninstalling
-sat source <pm>                # Install a package manager (huber, cargo, brew, nix)
-sat search <pkg>               # Cross-ecosystem package search
-sat search <pkg>:gh            # Search specific source (gh, cargo, npm, etc.)
-sat pull                       # Refresh lib + binary from GitHub
-sat clone <repo>               # Clone repo (short name uses cached GitHub username)
-```
-
-## Flags
-
-```bash
-sat --debug <command>   # Show raw installer output instead of suppressing it
-sat --update            # Alias for sat pull (self-update)
-```
-
-## Development
-
-**Library development:**
-The sat binary uses `~/.local/share/sat/lib/` for the library. For active development, symlink to your dev directory:
-
-```bash
-rm -rf ~/.local/share/sat/lib
-ln -s ~/Workspace/dev/sat/lib ~/.local/share/sat/lib
-```
-
-Changes to library files are now immediately active when running `sat` commands.
-
-**Testing:**
-
-```bash
-# Test shell + cleanup
-sat shell cowsay:sys figlet:brew hyperfine:cargo
-# ... use tools ...
-exit  # or kill terminal
-
-# Verify cleanup
-sat list                              # Should show no session tools
-sat which cowsay figlet hyperfine     # Should be gone
-ls ~/.local/share/sat/shell/          # Session dir gone
-ls /tmp/sat-*                         # XDG temp gone
-
-# Test promotion
-sat shell ripgrep:cargo
-# inside shell:
-sat install ripgrep                   # Promotes to system
-exit
-sat which ripgrep                     # Still installed (system manifest)
-
-# Test AppImage installation
-sat install dorion                    # Auto-fallback finds AppImage
-sat list | grep dorion                # Verify tracking
-ls ~/.local/share/sat/bin/appimages/  # Verify storage
-sat uninstall dorion                  # Test cleanup
-```
+**Future:** Library designed to be hosted remotely (`curl | bash`), with binary-only local install. Architecture already supports this — wrappers auto-detect context.
 
 ## Code Patterns & Best Practices
 
 ### Output Suppression
 
-All installer commands must use `_run_quiet` (defined in `common.sh`) instead of `&>/dev/null`:
+Use `_run_quiet` (defined in `common.sh`) instead of `&>/dev/null`:
 
 ```bash
 _run_quiet cargo install "$tool"   # suppressed normally, visible with --debug
 # NOT: cargo install "$tool" &>/dev/null
 ```
 
-This allows `sat --debug <command>` to expose raw installer output for troubleshooting.
-
 ### Debug Output
 
-When `SAT_DEBUG` is set (via `sat --debug`), functions should output diagnostic information to stderr:
+When `SAT_DEBUG` is set (via `sat --debug`), output diagnostic info to stderr:
 
 ```bash
 [[ -n "$SAT_DEBUG" ]] && echo "[debug] trying appimage for $repo_path" >&2
 ```
 
-**Debug output conventions:**
-- Use `[debug]` prefix for all debug messages
-- Indent with spaces to show call hierarchy: `[debug]   nested call`
-- Write to stderr (`>&2`) to avoid polluting stdout
-- Show fallback chain: "trying X...", "X failed, trying Y..."
-- Include key decisions: architecture detection, asset selection, auth method
-- Export `SAT_DEBUG` so it propagates to subprocesses and sourced scripts
+**Conventions:**
+- `[debug]` prefix, indented for call hierarchy
+- Write to stderr (`>&2`)
+- Show fallback chain and key decisions
+- Export `SAT_DEBUG` for propagation
 
 ### Bash Parser Limitations
 
-**Critical**: Bash has a parser bug when combining:
+**Critical bug** when combining:
 1. `declare -A` (associative arrays)
 2. Nested function definitions
-3. Control structures (`while`, `if`) inside those nested functions
+3. Control structures (`while`, `if`) inside nested functions
 
 ```bash
-# ❌ This causes syntax errors:
+# ❌ Syntax error:
 func() {
     declare -A arr=(["key"]="val")
-
     nested() {
-        while [[ condition ]]; do  # ← Syntax error!
+        while [[ condition ]]; do  # ← Parser bug!
             ...
         done
     }
 }
 
-# ✅ Solution: Use helper functions with explicit mappings
+# ✅ Solution: Helper functions with explicit mappings
 func() {
-    # Define nested functions FIRST
-    nested() { ... }
+    nested() { ... }  # Define FIRST
 
-    # Use helper functions instead of associative arrays
     _process() {
         local key="$1" val="$2"
         # Explicit mapping, no arrays
     }
 
     _process "cargo" "$cargo_bin"
-    _process "npm" "$npm_bin"
 }
 ```
 
-**Example**: `lib/commands/scan.sh` uses `_scan_dir()` helper with explicit source-to-directory mappings instead of `declare -A scan_dirs`.
+Example: `lib/commands/scan.sh` uses `_scan_dir()` helper instead of `declare -A scan_dirs`.
 
 ### DRY Principles
 
-Extract repeated code into helper functions:
+Extract repeated code into helpers:
 
 ```bash
 # lib/commands/scan.sh
@@ -398,165 +186,53 @@ _try_add_tool() {
     # ... display logic
 }
 
-# Used everywhere instead of repeating 9 lines
-_try_add_tool "$prog" "$src" && ((added++))
-```
-
-```bash
-# lib/commands/list.sh
-_display_tool() {
-    local prog="$1" source="$2"
-    # Centralized display formatting
-}
+_try_add_tool "$prog" "$src" && ((added++))  # Used everywhere
 ```
 
 ### Function Organization
 
 In files with nested functions:
-1. **Define helper functions first** (before any complex data structures)
-2. **Keep helper functions small and focused** (single responsibility)
-3. **Use explicit parameter passing** over global variables when possible
-
-## Error Handling
-
-- **No silent failures**: All errors visible with context
-- **Sudo caching**: Requested once before shell/cleanup if `:sys` packages involved
-- **Master-first cleanup**: Handles stale entries even without session dir
-
-## Dependencies
-
-**Core (required):**
-- `tmux` - Shell isolation
-- `jq` - JSON parsing for API responses
-- `curl` - HTTP requests
-
-**Recommended:**
-- `gh` (GitHub CLI) - Authenticated API access, avoids rate limits
-  - Install: `sat source huber && huber install cli/cli`
-  - Authenticate: `gh auth login`
-
-**Optional (per source):**
-- `cargo` - Rust package installation
-- `uv` - Python package installation
-- `npm` - Node.js package installation
-- `go` - Go package installation
-- `brew` - Homebrew package manager
-- `nix` - Nix package manager
-- `huber` - GitHub release binary manager
-
-Run `sat deps` to install core dependencies.
-
-## Remote Sourcing
-
-The tool sources scripts from a remote repository for OS detection and bootstrapping:
-- `SAT_BASE=https://raw.githubusercontent.com/DeprecatedLuar/the-satellite/main`
-- `internal/os_detection.sh` - OS/distro detection (sourced in common.sh)
-- `internal/fetcher.sh` - Sat wrapper installer
-- `cargo-bay/programs/*.sh` - Sat wrapper scripts
+1. Define helper functions FIRST (before complex data structures)
+2. Keep helpers small and focused (single responsibility)
+3. Use explicit parameter passing over globals
 
 ## GitHub Install Methods
 
-When installing from GitHub (`sat install owner/repo` or `<pkg>:gh`):
+Automatic fallback chain (`install_github` with `method=auto`):
+1. **Huber** - Prebuilt release binaries
+2. **AppImage** - Portable GUI apps from releases
+3. **Language-based routing** - Go → `go install`, Python → `uv tool install`
+4. **Script** - Run `install.sh` if present
 
-**Automatic fallback chain (`install_github` with `method=auto`):**
-1. **Huber** - Prebuilt release binaries (requires `huber` installed)
-2. **AppImage** - Portable GUI apps from GitHub releases
-3. **Language-based routing** - Build from source based on repo language:
-   - `Go` → `go install`
-   - `Python` → `uv tool install`
-4. **Script** - Run `install.sh` if present in repo
-
-**AppImage installation (`install_github_appimage`):**
-- Platform detection: x86_64, aarch64, armv7l
-- Filters release assets for matching architecture (amd64/x86_64, arm64/aarch64, etc.)
+**AppImage installation:**
+- Platform detection (x86_64, aarch64, armv7l)
 - Downloads to `~/.local/share/sat/bin/appimages/`
-- Creates symlink in `~/.local/bin/` with cleaned name (lowercase, version stripped)
+- Symlinks to `~/.local/bin/` with cleaned name (lowercase, version stripped)
 - Manifest: `tool=appimage:owner/repo`
-- Example: `Dorion_6.12.2_amd64.AppImage` → `~/.local/bin/dorion`
 
-**GitHub API authentication:**
-- Uses `gh api` (GitHub CLI) when authenticated → higher rate limits
-- Falls back to `curl` when `gh` not installed or not authenticated
-- Rate limit errors show helpful message: "Authenticate with 'gh auth login'"
-- Pattern applies to all GitHub API calls (search, releases, tree fetch)
+**GitHub API:**
+- Uses `gh api` when authenticated (higher rate limits)
+- Falls back to `curl` when unauthenticated
+- Search functions in `search.sh` reused by both `sat search` and install
 
-Search functions in `search.sh` are reused by both `sat search` and install.
+## Search System
 
-## Search System Architecture
+`sat search` queries multiple ecosystems in parallel (system, flatpak, brew, nix, cargo, pypi, npm, github). Each has dedicated search logic in `lib/search.sh`. Color-coded output with version normalization.
 
-### Multi-Source Parallel Search
-`sat search` queries multiple package ecosystems in parallel for fast results:
-- **System packages**: apt/pacman/dnf/apk (depending on OS)
-- **Flatpak**: Flathub GUI applications
-- **Homebrew**: formulas + casks (macOS/Linux)
-- **Nix**: NixOS package repository
-- **Cargo**: Rust crates
-- **PyPI**: Python packages
-- **npm**: Node.js packages
-- **GitHub**: Source repositories
+## Development
 
-### Per-Ecosystem Search Functions
-
-Each package manager has dedicated search logic in `lib/search.sh`:
-
-**System packages** (`search_system()`):
-- Router function calls OS-specific searchers:
-  - `search_system_apt()` - Debian/Ubuntu
-  - `search_system_pacman()` - Arch
-  - `search_system_apk()` - Alpine
-  - `search_system_dnf()` - Fedora/RHEL
-- Strips distro-specific version metadata (epochs, dfsg, build numbers)
-- Shows clean upstream versions
-
-**Flatpak** (`search_flatpak()`):
-- Uses `flatpak search` CLI directly
-- Smart filtering: prioritizes main apps over plugins/addons
-- Deduplicates by app ID
-- Skips `.Plugin`, `.Addon`, `.Extension` entries unless directly matching query
-
-**Homebrew** (`search_brew()`):
-- Checks both formulas (CLI tools) and casks (GUI apps)
-- Platform detection: shows `(macOS only)` flag for casks with macOS requirements
-- API-based: `formulae.brew.sh`
-
-**Nix** (`search_nix()`):
-- Searches via Bonsai search API
-- Strips `-unstable-YYYY-MM-DD` suffixes for cleaner display
-- Deduplicates by package name
-
-**Others** (cargo, npm, pypi):
-- Direct API calls to crates.io, npmjs.org, pypi.org
-- JSON parsing with jq
-
-### Display System
-
-**Color scheme** (`lib/common.sh`):
-- Each source has distinct header + pastel colors
-- Headers: bright/saturated (magenta, green, blue, etc.)
-- Package names: soft pastels matching header hue
-
-**Filtering** (`filter_relevant()`):
-- Matches query against package name with word boundaries
-- Recognizes `-`, `_`, `@`, `/`, `.` as delimiters
-- Case-insensitive
-
-**Output format**:
-```
-source:
-  package-name version - description
+**Library development symlink:**
+```bash
+rm -rf ~/.local/share/sat/lib
+ln -s ~/Workspace/dev/sat/lib ~/.local/share/sat/lib
 ```
 
-### Version Normalization
+Changes to lib files are immediately active. Run `sat pull` to restore production library.
 
-Different ecosystems show versions differently:
-- **apt**: Strips `1:`, `+dfsg`, `-8build1` → clean upstream
-- **nix**: Strips `-unstable-2025-01-01` → release version
-- **brew/npm/cargo/pypi**: Direct from API
-- **flatpak**: From AppStream metadata
+## Dependencies
 
-### Installation Error Handling
+**Core:** `tmux`, `jq`, `curl`
+**Recommended:** `gh` (GitHub CLI) for authenticated API access
+**Optional:** cargo, uv, npm, go, brew, nix, huber
 
-**Brew casks on Linux**:
-- Detects "macOS is required" errors
-- Shows platform-specific error via status display
-- Prevents misleading "not found" messages
+Run `sat deps` to install core dependencies.

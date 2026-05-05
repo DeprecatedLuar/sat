@@ -158,8 +158,15 @@ install_github_appimage() {
     local asset_url=$(echo "$assets" | grep -iE "$arch_pattern" | head -1 | cut -d'|' -f2)
     local asset_name=$(echo "$assets" | grep -iE "$arch_pattern" | head -1 | cut -d'|' -f1)
 
+    # Fallback: if no arch-specific match, try any AppImage (assumes x86_64)
     if [[ -z "$asset_url" ]]; then
-        [[ -n "$SAT_DEBUG" ]] && echo "[debug]   no matching AppImage for architecture" >&2
+        [[ -n "$SAT_DEBUG" ]] && echo "[debug]   no arch-specific match, trying any AppImage..." >&2
+        asset_url=$(echo "$assets" | head -1 | cut -d'|' -f2)
+        asset_name=$(echo "$assets" | head -1 | cut -d'|' -f1)
+    fi
+
+    if [[ -z "$asset_url" ]]; then
+        [[ -n "$SAT_DEBUG" ]] && echo "[debug]   no AppImage available" >&2
         return 1
     fi
 

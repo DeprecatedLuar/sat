@@ -26,6 +26,25 @@ sat_scan() {
         case "$src" in
             cargo) [[ "$prog" == cargo-* || "$prog" == clippy-driver || "$prog" == rust[!u]* || "$prog" == rls ]] && return 0 ;;
             nix)   [[ "$prog" == nix || "$prog" == nix-* ]] && return 0 ;;
+            nixos)
+                # NixOS/Nix system tools
+                case "$prog" in
+                    nix|nix-*|nixos-*) return 0 ;;
+                esac
+                # Desktop environment infrastructure (services/daemons, not apps)
+                case "$prog" in
+                    # XFCE services
+                    xfce4-panel|xfce4-session|xfce4-power-manager|xfce4-settings|xfdesktop|xfwm4|xfce4-screensaver) return 0 ;;
+                    # GNOME services
+                    gnome-keyring|gnome-settings-daemon|gnome-session) return 0 ;;
+                    # KDE/Plasma services
+                    plasma-*|kwin*) return 0 ;;
+                esac
+                # X11/system utilities
+                case "$prog" in
+                    xinit|xinput|xlsclients|xprop|xrandr|xrdb|xset|xsetroot|xterm) return 0 ;;
+                esac
+                ;;
             *)     [[ "$prog" == git-* || "$prog" == scalar || "$prog" == trash-* ]] && return 0 ;;
         esac
         return 1
@@ -56,15 +75,14 @@ sat_scan() {
         done
     }
 
-    # Detect bin directories dynamically
-    local cargo_bin="$HOME/.cargo/bin"
-    [[ ! -d "$cargo_bin" ]] && command -v cargo &>/dev/null && cargo_bin="$(dirname "$(command -v cargo)")"
+    # Detect bin directories using env vars (respect user config)
+    local cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
 
-    local npm_bin="$HOME/.npm-global/bin"
-    [[ ! -d "$npm_bin" ]] && command -v npm &>/dev/null && npm_bin="$(npm root -g 2>/dev/null)/../bin"
+    local npm_bin="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}/bin"
+    command -v npm &>/dev/null && npm_bin="$(npm config get prefix 2>/dev/null)/bin"
 
-    local go_bin="$HOME/go/bin"
-    [[ ! -d "$go_bin" ]] && command -v go &>/dev/null && go_bin="$(go env GOPATH 2>/dev/null)/bin"
+    local go_bin=""
+    command -v go &>/dev/null && go_bin="$(go env GOPATH 2>/dev/null)/bin"
 
     # Get brew leaves for validation
     local brew_leaves=""
@@ -116,6 +134,23 @@ sat_scan() {
             prog=$(basename "$bin")
             _try_add_tool "$prog" "nix" && ((added++))
         done
+    fi
+
+    # NixOS: scan system packages from configuration (only user-installed, not deps)
+    if command -v nixos-option &>/dev/null; then
+        local user_packages=$(nixos-option environment.systemPackages 2>/dev/null | \
+            grep -oP '<derivation \K[^>]+' | \
+            awk -F'-[0-9]' '{print $1}' | \
+            sort -u)
+
+        if [[ -n "$user_packages" && -d "/run/current-system/sw/bin" ]]; then
+            for bin in /run/current-system/sw/bin/*; do
+                [[ ! -x "$bin" ]] && continue
+                prog=$(basename "$bin")
+                # Only add if binary name matches a user-installed package
+                echo "$user_packages" | grep -qxF "$prog" && _try_add_tool "$prog" "nixos" && ((added++))
+            done
+        fi
     fi
 
     # AppImages: scan sat's appimage directory

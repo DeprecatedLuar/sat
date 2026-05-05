@@ -48,6 +48,7 @@ source_color() {
         go|go:*)                     printf '%s' "$C_GO" ;;
         brew)                        printf '%s' "$C_BREW" ;;
         nix)                         printf '%s' "$C_NIX" ;;
+        nixos)                       printf '%s' "$C_NIX" ;;
         manual)                      printf '%s' "$C_MANUAL" ;;
         unknown)                     printf '%s' "$C_DIM" ;;
         *)                           printf '%s' "$C_RESET" ;;
@@ -227,7 +228,7 @@ source_display() {
         cargo)        echo "rust" ;;
         repo|repo:*)  echo "github" ;;
         gh|gh:*)      echo "github" ;;
-        appimage:*)   echo "${1#appimage:}" ;;  # Show repo for appimage:owner/repo
+        appimage:*)   echo "appimage" ;;
         appimage)     echo "appimage" ;;
         *)            echo "$1" ;;
     esac
@@ -243,8 +244,9 @@ source_light() {
         sat|repo|repo:*|gh|gh:*|github) printf '%s' "$C_REPO_L" ;;
         appimage|appimage:*)           printf '%s' "$C_APPIMAGE_L" ;;
         go|go:*)                       printf '%s' "$C_GO_L" ;;
-        brew)                          printf '%s' "$C_BREW_L" ;;
+        brew)                          printf '%s' "$C_NIX_L" ;;
         nix)                           printf '%s' "$C_NIX_L" ;;
+        nixos)                         printf '%s' "$C_NIX_L" ;;
         manual)                        printf '%s' "$C_MANUAL_L" ;;
         unknown)                       printf '%s' "$C_DIM" ;;
         *)                             printf '%s' "$C_RESET" ;;
