@@ -415,52 +415,45 @@ pkg_install() {
     esac
 }
 
-# Remove package via source
+# Remove package via source (delegates to source modules)
 pkg_remove() {
     local pkg="$1" source="$2"
-    case "$source" in
-        apt)     sudo apt remove --purge -y "$pkg" && sudo apt autoremove -y ;;
-        apk)     sudo apk del "$pkg" ;;
-        pacman)  sudo pacman -Rs --noconfirm "$pkg" ;;
-        dnf)     sudo dnf remove -y "$pkg" ;;
-        pkg)     pkg uninstall -y "$pkg" ;;
-        uv|uv:*)
-            # Binary name may differ from package name - look it up
-            # uv tool list format: "package-name vX.X.X\n- binary1\n- binary2"
-            local uv_pkg=$(uv tool list 2>/dev/null | grep -B1 "^- $pkg\$" | head -1 | cut -d' ' -f1)
-            uv tool uninstall "${uv_pkg:-$pkg}"
-            ;;
-        cargo)
-            # Binary name may differ from crate name - look it up
-            crate=$(cargo install --list 2>/dev/null | grep -B1 "^    $pkg\$" | head -1 | cut -d' ' -f1)
-            cargo uninstall "${crate:-$pkg}"
-            ;;
-        npm)     npm uninstall -g "$pkg" ;;
-        go:*)    rm -f "$GOPATH/bin/$pkg" "$HOME/go/bin/$pkg" 2>/dev/null ;;
-        brew)    brew uninstall "$pkg" ;;
-        nix)     nix-env --uninstall "$pkg" 2>/dev/null || nix profile remove "$pkg" ;;
-        sat) rm -f "$HOME/.local/bin/$pkg" ;;
-        repo)    rm -f "$HOME/.local/bin/$pkg" ;;
-        repo:*)  rm -f "$HOME/.local/bin/$pkg" ;;
-        gh:*)
-            rm -f "$HOME/.local/bin/$pkg" "$HOME/bin/$pkg" 2>/dev/null
-            ;;
-        appimage:*)
-            rm -f "$HOME/.local/bin/$pkg"  # Remove symlink
-            rm -f "$HOME/.local/share/sat/bin/appimages/$pkg"  # Remove AppImage
-            ;;
-        system)  # Generic system - use cached package manager
+    local src_type="${source%%:*}"  # Strip metadata (e.g., "go:path" → "go")
+
+    case "$src_type" in
+        # Delegate to source modules (functions defined in lib/sources/*.sh)
+        cargo)      uninstall_cargo "$pkg" "$source" ;;
+        npm)        uninstall_npm "$pkg" "$source" ;;
+        go)         uninstall_go "$pkg" "$source" ;;
+        brew)       uninstall_brew "$pkg" "$source" ;;
+        nix)        uninstall_nix "$pkg" "$source" ;;
+        uv)         uninstall_uv "$pkg" "$source" ;;
+        sat)        uninstall_sat "$pkg" "$source" ;;
+        flatpak)    uninstall_flatpak "$pkg" "$source" ;;
+        appimage)   uninstall_appimage "$pkg" "$source" ;;
+        gh|repo)    uninstall_github "$pkg" "$source" ;;
+
+        # System package managers (inline - no separate module needed)
+        apt)        sudo apt remove --purge -y "$pkg" && sudo apt autoremove -y ;;
+        apk)        sudo apk del "$pkg" ;;
+        pacman)     sudo pacman -Rs --noconfirm "$pkg" ;;
+        dnf)        sudo dnf remove -y "$pkg" ;;
+        pkg)        pkg uninstall -y "$pkg" ;;
+        system)
+            # Generic system - use cached package manager
             local mgr="$SAT_PKG_MANAGER"
             [[ -z "$mgr" ]] && return 1
             pkg_remove "$pkg" "$mgr"
-            return $?
             ;;
-        unknown:*)
+
+        # Unknown binaries
+        unknown)
             # Extract path from source (format: unknown:/path/to/binary)
             local bin_path="${source#unknown:}"
             rm -f "$bin_path"
             ;;
-        *)       return 1 ;;
+
+        *)          return 1 ;;
     esac
 }
 

@@ -2,7 +2,7 @@
 # update.sh - Update packages installed via sat
 
 # Source GitHub installation for AppImage updates
-source "$SAT_LIB/installation/github.sh"
+source "$SAT_LIB/sources/github.sh"
 
 _update_tool() {
     local tool="$1"
