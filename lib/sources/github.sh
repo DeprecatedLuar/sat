@@ -1,0 +1,260 @@
+#!/usr/bin/env bash
+# GitHub - Self-contained source module for GitHub-based installs
+
+# Source appimage module for delegation
+source "$SAT_LIB/sources/appimage.sh"
+
+# Temp file for subshell communication
+_GH_RESULT_FILE="/tmp/sat-gh-result-$$"
+
+# Shared GitHub API wrapper
+_gh_api() {
+    local endpoint="$1"
+    if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+        gh api "$endpoint" 2>/dev/null
+    else
+        curl -sS "https://api.github.com/$endpoint"
+    fi
+}
+
+# Fetch repo tree structure (tries main, then master)
+_fetch_tree() {
+    local repo="$1"
+    local tree
+
+    tree=$(_gh_api "repos/$repo/git/trees/main?recursive=1" | jq -r '.tree[].path' 2>/dev/null)
+    [[ -z "$tree" || "$tree" == "null" ]] && \
+        tree=$(_gh_api "repos/$repo/git/trees/master?recursive=1" | jq -r '.tree[].path' 2>/dev/null)
+
+    echo "$tree"
+}
+
+# Write result to temp file (for subshell communication)
+_gh_set_result() {
+    local bin="$1" src="$2"
+    echo "BIN=$bin" > "$_GH_RESULT_FILE"
+    echo "SRC=$src" >> "$_GH_RESULT_FILE"
+}
+
+# Read result from temp file
+_gh_get_result() {
+    [[ -f "$_GH_RESULT_FILE" ]] || return 1
+    source "$_GH_RESULT_FILE"
+    _GH_INSTALLED_BIN="$BIN"
+    _GH_INSTALL_SOURCE="$SRC"
+    rm -f "$_GH_RESULT_FILE"
+}
+
+# =============================================================================
+# SEARCH
+# =============================================================================
+
+# Search GitHub repositories
+search_github() {
+    local query="$1"
+    local limit="${2:-10}"
+
+    _gh_api "search/repositories?q=$query+in:name&per_page=$limit" 2>/dev/null
+}
+
+# Find best matching GitHub repo (with filtering)
+search_github_best_match() {
+    local query="$1"
+    local gh_data=$(search_github "$query" 10)
+
+    echo "$gh_data" | jq -r '.items[]? | "\(.full_name)|\(.language // "")"' | \
+        awk -F'|' -v q="$query" '
+        BEGIN { IGNORECASE=1 }
+        {
+            full_name = $1
+            lang = $2
+
+            split(full_name, parts, "/")
+            name = parts[2]
+
+            pattern = "(^|[-_@/.])" q "($|[-_@/.])"
+            if (name ~ pattern) {
+                print full_name "|" lang
+                exit
+            }
+        }'
+}
+
+# =============================================================================
+# INSTALLATION METHODS
+# =============================================================================
+
+# Method 1: Huber (binary releases)
+_install_huber() {
+    local repo_path="$1"
+    local repo_name="${repo_path##*/}"
+
+    command -v huber &>/dev/null || return 1
+    _run_quiet huber install "$repo_path" || return 1
+
+    local huber_bin="$HOME/.huber/bin/$repo_name"
+    if [[ -x "$huber_bin" ]]; then
+        mkdir -p "$HOME/.local/bin"
+        ln -sf "$huber_bin" "$HOME/.local/bin/$repo_name"
+        _gh_set_result "$repo_name" "gh:$repo_path"
+        return 0
+    fi
+
+    return 1
+}
+
+# Method 2: Go (build from GitHub)
+_install_go() {
+    local repo_path="$1"
+    local tree="$2"
+    local repo_name="${repo_path##*/}"
+
+    command -v go &>/dev/null || return 1
+    echo "$tree" | grep -q '^go.mod$' || return 1
+
+    repo_path="${repo_path,,}"
+    local go_bin go_path go_subdir=""
+
+    go_bin=$(echo "$tree" | grep -oP '^cmd/\K[^/]+(?=/main\.go$)' | head -1)
+    [[ -n "$go_bin" ]] && go_subdir="cmd"
+    [[ -z "$go_bin" ]] && echo "$tree" | grep -q "^${repo_name}/main\.go$" && go_bin="$repo_name"
+
+    if [[ -n "$go_bin" ]]; then
+        go_path="github.com/$repo_path/${go_subdir:+$go_subdir/}$go_bin@latest"
+    elif echo "$tree" | grep -q '^main.go$'; then
+        go_path="github.com/$repo_path@latest"
+    else
+        return 1
+    fi
+
+    _run_quiet go install "$go_path" || return 1
+    _gh_set_result "${go_bin:-$repo_name}" "go:github.com/$repo_path"
+    return 0
+}
+
+# Method 3: Python (build from GitHub)
+_install_python() {
+    local repo_path="$1"
+    local tree="$2"
+    local repo_name="${repo_path##*/}"
+
+    command -v uv &>/dev/null || return 1
+    echo "$tree" | grep -qE '^(pyproject.toml|setup.py|setup.cfg)$' || return 1
+
+    _run_quiet uv tool install "git+https://github.com/$repo_path" || return 1
+    _gh_set_result "$repo_name" "uv"
+    return 0
+}
+
+# Method 4: Install script
+_install_script() {
+    local repo_path="$1"
+    local tree="$2"
+    local repo_name="${repo_path##*/}"
+
+    echo "$tree" | grep -q '^install.sh$' || return 1
+
+    local install_url="https://raw.githubusercontent.com/$repo_path/main/install.sh"
+    curl -sfI "$install_url" &>/dev/null || \
+        install_url="https://raw.githubusercontent.com/$repo_path/master/install.sh"
+    curl -sfI "$install_url" &>/dev/null || return 1
+
+    local bin_dirs=("$HOME/.local/bin" "$HOME/bin" "$HOME/.cargo/bin" "/usr/local/bin")
+    local before=$(for d in "${bin_dirs[@]}"; do ls -1 "$d" 2>/dev/null; done | sort -u)
+
+    if [[ -n "$SAT_DEBUG" ]]; then
+        curl -sfL "$install_url" | bash
+    else
+        curl -sfL "$install_url" | bash &>/dev/null
+    fi
+
+    if [[ $? -eq 0 ]]; then
+        local after=$(for d in "${bin_dirs[@]}"; do ls -1 "$d" 2>/dev/null; done | sort -u)
+        local new_bin=$(comm -13 <(echo "$before") <(echo "$after") | head -1)
+        _gh_set_result "${new_bin:-$repo_name}" "gh:$repo_path"
+        return 0
+    fi
+    return 1
+}
+
+# Main orchestrator
+install_github() {
+    local input="$1"
+    local method="${2:-auto}"
+
+    [[ -n "$SAT_DEBUG" ]] && echo "[debug]   install_github: input=$input, method=$method" >&2
+
+    local repo lang tree
+    rm -f "$_GH_RESULT_FILE"
+
+    if [[ "$input" == */* ]]; then
+        repo="$input"
+    else
+        local result=$(search_github_best_match "$input")
+        [[ -z "$result" ]] && return 1
+        repo="${result%|*}"
+        lang="${result#*|}"
+    fi
+
+    tree=$(_fetch_tree "$repo")
+    [[ -z "$tree" || "$tree" == "null" ]] && return 1
+
+    case "$method" in
+        auto)
+            _install_huber "$repo" && return 0
+
+            if install_appimage "$repo"; then
+                local app_name=$(install_appimage "$repo" 2>&1 | tail -1)
+                _gh_set_result "$app_name" "appimage:$repo"
+                return 0
+            fi
+
+            case "$lang" in
+                Go)     _install_go "$repo" "$tree" && return 0 ;;
+                Python) _install_python "$repo" "$tree" && return 0 ;;
+                "")     _install_go "$repo" "$tree" && return 0
+                        _install_python "$repo" "$tree" && return 0 ;;
+            esac
+
+            _install_script "$repo" "$tree" && return 0
+            return 1
+            ;;
+        release)
+            command -v huber &>/dev/null || { echo "huber required" >&2; return 1; }
+            _install_huber "$repo"
+            ;;
+        appimage)
+            if install_appimage "$repo"; then
+                local app_name=$(install_appimage "$repo" 2>&1 | tail -1)
+                _gh_set_result "$app_name" "appimage:$repo"
+                return 0
+            fi
+            return 1
+            ;;
+        script)
+            _install_script "$repo" "$tree"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# Uninstall
+uninstall_github() {
+    local pkg="$1"
+    local source="$2"
+
+    # If source has repo metadata (gh:owner/repo), try huber first
+    if [[ "$source" == gh:*/* ]]; then
+        local repo="${source#gh:}"
+        if command -v huber &>/dev/null; then
+            huber uninstall "$repo" 2>/dev/null && return 0
+        fi
+    fi
+
+    # Fallback: manual removal (for scripts or if huber unavailable)
+    rm -f "$HOME/.local/bin/$pkg" "$HOME/bin/$pkg" 2>/dev/null
+    # Also remove huber symlink if it exists
+    rm -f "$HOME/.huber/bin/$pkg" 2>/dev/null
+}

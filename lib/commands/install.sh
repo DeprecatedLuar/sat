@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
 # sat install - install programs from various sources
 
-# Source installation modules
-source "$SAT_LIB/installation/github.sh"
-source "$SAT_LIB/installation/cargo.sh"
-source "$SAT_LIB/installation/system.sh"
-source "$SAT_LIB/installation/brew.sh"
-source "$SAT_LIB/installation/uv.sh"
-source "$SAT_LIB/installation/npm.sh"
-source "$SAT_LIB/installation/go.sh"
-source "$SAT_LIB/installation/nix.sh"
-source "$SAT_LIB/installation/flatpak.sh"
-source "$SAT_LIB/installation/sat.sh"
-source "$SAT_LIB/commands/search.sh"
+# Source all source modules (self-contained: search + install + uninstall)
+source "$SAT_LIB/sources/github.sh"
+source "$SAT_LIB/sources/cargo.sh"
+source "$SAT_LIB/sources/system.sh"
+source "$SAT_LIB/sources/brew.sh"
+source "$SAT_LIB/sources/uv.sh"
+source "$SAT_LIB/sources/npm.sh"
+source "$SAT_LIB/sources/go.sh"
+source "$SAT_LIB/sources/nix.sh"
+source "$SAT_LIB/sources/flatpak.sh"
+source "$SAT_LIB/sources/sat.sh"
 
 # =============================================================================
 # SOURCE-SPECIFIC INSTALLATION
