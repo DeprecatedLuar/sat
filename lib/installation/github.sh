@@ -70,6 +70,9 @@ install_github_go() {
     command -v go &>/dev/null || return 1
     echo "$tree" | grep -q '^go.mod$' || return 1
 
+    # Lowercase normalization (Go module paths are case-sensitive, GitHub URLs are not)
+    repo_path="${repo_path,,}"
+
     local go_bin go_path go_subdir=""
 
     # Check cmd/*/main.go pattern
@@ -272,13 +275,13 @@ install_github() {
         [[ -n "$SAT_DEBUG" ]] && echo "[debug]   direct repo path: $repo" >&2
     else
         [[ -n "$SAT_DEBUG" ]] && echo "[debug]   searching GitHub for: $input" >&2
-        local gh_data=$(search_github "$input" 1)
-        repo=$(echo "$gh_data" | jq -r '.items[0].full_name // empty')
-        lang=$(echo "$gh_data" | jq -r '.items[0].language // empty')
-        if [[ -z "$repo" ]]; then
+        local result=$(search_github_best_match "$input")
+        if [[ -z "$result" ]]; then
             [[ -n "$SAT_DEBUG" ]] && echo "[debug]   search returned no results" >&2
             return 1
         fi
+        repo="${result%|*}"
+        lang="${result#*|}"
         [[ -n "$SAT_DEBUG" ]] && echo "[debug]   found repo: $repo (language: $lang)" >&2
     fi
 

@@ -62,6 +62,43 @@ sat_scan() {
         return 0
     }
 
+    # Clean up stale/invalid manifest entries
+    _cleanup_manifest() {
+        local brew_leaves=""
+        command -v brew &>/dev/null && brew_leaves=$(brew leaves 2>/dev/null)
+
+        local pruned=0
+        while IFS='=' read -r prog source; do
+            [[ -z "$prog" ]] && continue
+            local should_prune=false
+            local reason=""
+
+            # Check exclusion patterns
+            if is_excluded "$prog" "$source"; then
+                should_prune=true
+                reason="excluded"
+            # Check brew deps (not in leaves)
+            elif [[ "$source" == "brew" && -n "$brew_leaves" ]]; then
+                if ! echo "$brew_leaves" | grep -qxF "$prog"; then
+                    should_prune=true
+                    reason="brew dep"
+                fi
+            # Check if managed as symlink in ~/.local/bin (dotfiles, etc.)
+            elif [[ -L "$HOME/.local/bin/$prog" ]]; then
+                should_prune=true
+                reason="symlink"
+            fi
+
+            if $should_prune; then
+                _sat_manifest_remove "$prog"
+                printf "  ${C_DIM}- %-20s ($reason)${C_RESET}\n" "$prog"
+                ((pruned++))
+            fi
+        done < "$SAT_MANIFEST"
+
+        return $pruned
+    }
+
     # Scan a directory for binaries from a specific source
     _scan_dir() {
         local src="$1" dir="$2"
@@ -82,27 +119,9 @@ sat_scan() {
     local go_bin=""
     command -v go &>/dev/null && go_bin="$(go env GOPATH 2>/dev/null)/bin"
 
-    # Get brew leaves for validation
-    local brew_leaves=""
-    command -v brew &>/dev/null && brew_leaves=$(brew leaves 2>/dev/null)
-
-    # Prune excluded entries and brew deps from manifest
-    local pruned=0
-    while IFS='=' read -r prog source; do
-        [[ -z "$prog" ]] && continue
-        local should_prune=false
-        if is_excluded "$prog" "$source"; then
-            should_prune=true
-        elif [[ "$source" == "brew" && -n "$brew_leaves" ]]; then
-            # Prune brew entries not in leaves (deps)
-            echo "$brew_leaves" | grep -qxF "$prog" || should_prune=true
-        fi
-        if $should_prune; then
-            _sat_manifest_remove "$prog"
-            printf "  ${C_DIM}- %-20s (excluded)${C_RESET}\n" "$prog"
-            ((pruned++))
-        fi
-    done < "$SAT_MANIFEST"
+    # Clean up manifest before scanning
+    _cleanup_manifest
+    local pruned=$?
 
     local added=0
 
@@ -151,6 +170,16 @@ sat_scan() {
         fi
     fi
 
+    # Flatpak: scan user-installed apps (not runtimes)
+    if command -v flatpak &>/dev/null; then
+        while read -r app_id; do
+            [[ -z "$app_id" ]] && continue
+            # Use last component as prog name (org.gimp.GIMP → gimp)
+            prog=$(echo "$app_id" | awk -F. '{print tolower($NF)}')
+            _try_add_tool "$prog" "flatpak:$app_id" && ((added++))
+        done < <(flatpak list --app --columns=application 2>/dev/null)
+    fi
+
     # AppImages: scan sat's appimage directory
     local appimage_dir="$HOME/.local/share/sat/bin/appimages"
     if [[ -d "$appimage_dir" ]]; then
@@ -175,6 +204,6 @@ sat_scan() {
     fi
 
     echo ""
-    [[ $pruned -gt 0 ]] && echo "Pruned $pruned excluded entries"
+    [[ $pruned -gt 0 ]] && echo "Pruned $pruned entries"
     echo "Added $added packages to manifest"
 }

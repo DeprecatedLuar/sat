@@ -62,10 +62,15 @@ sat_list() {
                 stale+=("$prog")
                 continue
             fi
-            # Normalize source for grouping (repo:* -> repo, apt/pacman/etc -> system)
+            # Normalize source for grouping
             local group="$source"
             case "$source" in
                 repo:*) group="repo" ;;
+                gh:*) group="gh" ;;
+                go:*) group="go" ;;
+                unknown:*) group="unknown" ;;
+                appimage:*) group="appimage" ;;
+                flatpak:*) group="flatpak" ;;
                 apt|apk|pacman|dnf|pkg) group="system" ;;
             esac
             by_source[$group]+="$prog=$source"$'\n'
@@ -77,9 +82,13 @@ sat_list() {
             source_counts[$src]=$(echo "${by_source[$src]}" | grep -c "=")
         done
 
-        # Sort sources by count (descending)
+        # Sort sources by count (descending), but always put unknown last
         local sorted_sources=($(for src in "${!source_counts[@]}"; do
-            echo "${source_counts[$src]} $src"
+            if [[ "$src" == "unknown" ]]; then
+                echo "0 $src"  # Force unknown to sort last
+            else
+                echo "${source_counts[$src]} $src"
+            fi
         done | sort -rn | awk '{print $2}'))
 
         # Display in order of package count

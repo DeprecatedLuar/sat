@@ -10,6 +10,7 @@ source "$SAT_LIB/installation/uv.sh"
 source "$SAT_LIB/installation/npm.sh"
 source "$SAT_LIB/installation/go.sh"
 source "$SAT_LIB/installation/nix.sh"
+source "$SAT_LIB/installation/flatpak.sh"
 source "$SAT_LIB/installation/sat.sh"
 source "$SAT_LIB/commands/search.sh"
 
@@ -29,6 +30,7 @@ try_source() {
         go)     install_go "$tool" ;;
         brew)   install_brew "$tool" ;;
         nix)    install_nix "$tool" ;;
+        flatpak) install_flatpak "$tool" ;;
         system) install_system "$tool" ;;
         sat)    install_sat "$tool" ;;
         gh)          install_github "$tool" "auto" ;;
@@ -91,6 +93,7 @@ sat_install() {
             --go)           DEFAULT_SOURCE="go" ;;
             --brew)         DEFAULT_SOURCE="brew" ;;
             --nix)          DEFAULT_SOURCE="nix" ;;
+            --flatpak)      DEFAULT_SOURCE="flatpak" ;;
             --gh|--github)  DEFAULT_SOURCE="gh" ;;
             --debug)        export SAT_DEBUG=1 ;;
             *)              SPECS+=("$arg") ;;

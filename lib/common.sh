@@ -56,7 +56,7 @@ source_color() {
 }
 
 # Install fallback order for permanent installs (user-space first: brew/nix before system)
-INSTALL_ORDER=(brew nix system cargo uv npm sat gh)
+INSTALL_ORDER=(brew nix flatpak system cargo uv npm sat gh)
 
 # Install order for sat shell (isolated/user-space first, system before npm)
 SHELL_INSTALL_ORDER=(brew nix cargo uv system npm sat gh)
@@ -226,6 +226,8 @@ source_display() {
         npm)          echo "node" ;;
         uv)           echo "python" ;;
         cargo)        echo "rust" ;;
+        go:*)         echo "go" ;;
+        go)           echo "go" ;;
         repo:*/*)     echo "github" ;;     # Has owner/repo metadata
         gh:*/*)       echo "github" ;;     # Has owner/repo metadata
         repo)         echo "unknown" ;;    # Bare repo (no metadata)
@@ -233,6 +235,8 @@ source_display() {
         unknown)      echo "unknown" ;;    # Bare unknown
         appimage:*)   echo "appimage" ;;
         appimage)     echo "appimage" ;;
+        flatpak:*)    echo "flatpak" ;;
+        flatpak)      echo "flatpak" ;;
         *)            echo "$1" ;;
     esac
 }
@@ -248,6 +252,7 @@ source_light() {
         repo:*/*)                      printf '%s' "$C_REPO_L" ;;  # GitHub with metadata
         gh:*/*)                        printf '%s' "$C_REPO_L" ;;  # GitHub with metadata
         appimage|appimage:*)           printf '%s' "$C_APPIMAGE_L" ;;
+        flatpak|flatpak:*)             printf '%s' "$C_FLATPAK_L" ;;
         go|go:*)                       printf '%s' "$C_GO_L" ;;
         brew)                          printf '%s' "$C_NIX_L" ;;
         nix)                           printf '%s' "$C_NIX_L" ;;
@@ -449,6 +454,11 @@ pkg_remove() {
             [[ -z "$mgr" ]] && return 1
             pkg_remove "$pkg" "$mgr"
             return $?
+            ;;
+        unknown:*)
+            # Extract path from source (format: unknown:/path/to/binary)
+            local bin_path="${source#unknown:}"
+            rm -f "$bin_path"
             ;;
         *)       return 1 ;;
     esac

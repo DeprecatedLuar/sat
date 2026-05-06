@@ -13,7 +13,7 @@ sat_info() {
         display=$(source_display "$src")
         color=$(source_color "$display")
         tracked=$(_sat_manifest_get "$prog")
-        ver=$("$prog" --version 2>/dev/null | head -1 || echo "unknown")
+        ver=$(timeout 2 "$prog" --version 2>/dev/null | head -1 || echo "unknown")
 
         light=$(source_light "$src")
         printf "${light}%s${C_RESET} [${color}%s${C_RESET}] ${C_DIM}%s${C_RESET}\n" "$prog" "$display" "$ver"

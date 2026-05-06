@@ -12,6 +12,12 @@ sat_source() {
         python)    pm="uv" ;;
     esac
 
+    # NixOS check for nix
+    if [[ "$pm" == "nix" ]] && [[ -f /etc/NIXOS ]]; then
+        echo "bruh"
+        return 0
+    fi
+
     # Check if already available
     if command -v "$pm" &>/dev/null; then
         local_path=$(command -v "$pm")
@@ -24,8 +30,6 @@ sat_source() {
     mkdir -p "$sources_dir"
     mkdir -p "$HOME/.local/bin"
 
-    echo "Installing $pm to $sources_dir..."
-
     # Fetch and run installer script (installs to default location)
     SOURCE_SCRIPT="$SAT_BASE/packages/sources/$pm.sh"
 
@@ -34,21 +38,53 @@ sat_source() {
         return 1
     fi
 
-    # Optionally call bootstrap/ensure functions if they exist
+    # Optionally call bootstrap/ensure functions if they exist (suppress output)
     if declare -f bootstrap &>/dev/null; then
-        bootstrap
+        if [[ -n "$SAT_DEBUG" ]]; then
+            bootstrap
+        else
+            bootstrap &>/dev/null
+        fi
     elif declare -f "_ensure_$pm" &>/dev/null; then
-        "_ensure_$pm"
+        if [[ -n "$SAT_DEBUG" ]]; then
+            "_ensure_$pm"
+        else
+            "_ensure_$pm" &>/dev/null
+        fi
     fi
+
+    # Define companion binaries for packages that provide multiple binaries
+    local -a companions=()
+    case "$pm" in
+        uv) companions=("uvx" "uvw") ;;
+    esac
 
     # Move installed binary to sat's directory and symlink back
     local installed_path=$(command -v "$pm" 2>/dev/null)
     if [[ -n "$installed_path" ]]; then
-        # Move to sat's sources directory
+        local install_dir=$(dirname "$installed_path")
+
+        # Move primary binary
         mv "$installed_path" "$sources_dir/$pm"
-        # Create symlink back to original location
         ln -sf "$sources_dir/$pm" "$installed_path"
-        echo "✓ Moved $pm to $sources_dir/ and symlinked to $installed_path"
+
+        # Move companion binaries if they exist
+        local -a moved_companions=()
+        for comp in "${companions[@]}"; do
+            local comp_path="$install_dir/$comp"
+            if [[ -f "$comp_path" ]]; then
+                mv "$comp_path" "$sources_dir/$comp"
+                ln -sf "$sources_dir/$comp" "$comp_path"
+                moved_companions+=("$comp")
+            fi
+        done
+
+        # Print single consolidated message
+        if [[ ${#moved_companions[@]} -gt 0 ]]; then
+            echo "✓ $pm (+ ${moved_companions[*]}) → $installed_path"
+        else
+            echo "✓ $pm → $installed_path"
+        fi
     else
         echo "Warning: $pm was not found after installation" >&2
         return 1

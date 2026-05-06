@@ -18,6 +18,34 @@ search_github() {
     fi
 }
 
+# Find best matching GitHub repo (with filtering)
+# Returns: "owner/repo|language" or empty if no match
+search_github_best_match() {
+    local query="$1"
+    local gh_data=$(search_github "$query" 10)
+
+    # Apply same filtering logic as sat search display
+    # Pattern matches query as complete component (bounded by delimiters or start/end)
+    echo "$gh_data" | jq -r '.items[]? | "\(.full_name)|\(.language // "")"' | \
+        awk -F'|' -v q="$query" '
+        BEGIN { IGNORECASE=1 }
+        {
+            full_name = $1
+            lang = $2
+
+            # Extract repo name (after /)
+            split(full_name, parts, "/")
+            name = parts[2]
+
+            # filter_relevant pattern: query must be bounded by delimiters
+            pattern = "(^|[-_@/.])" q "($|[-_@/.])"
+            if (name ~ pattern) {
+                print full_name "|" lang
+                exit  # Return first filtered match
+            }
+        }'
+}
+
 # Search apt (Debian/Ubuntu)
 search_system_apt() {
     local query="$1"
