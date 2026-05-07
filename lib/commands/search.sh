@@ -243,14 +243,19 @@ sat_search() {
     local SOURCE=""
     local NO_WRAP=true
     local FILTER=true
+    local query_parts=()
 
     for arg in "$@"; do
         case "$arg" in
             --wrap) NO_WRAP=false ;;
             --all)  FILTER=false ;;
-            *)      QUERY="$arg" ;;
+            *)      query_parts+=("$arg") ;;
         esac
     done
+
+    # Join all query parts and normalize spaces to hyphens
+    QUERY="${query_parts[*]}"
+    QUERY="${QUERY// /-}"
 
     [[ -z "$QUERY" ]] && { echo "Usage: sat search <program>[:source] [--wrap] [--all]"; return 1; }
 

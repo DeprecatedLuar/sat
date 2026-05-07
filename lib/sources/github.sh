@@ -7,6 +7,9 @@ source "$SAT_LIB/sources/appimage.sh"
 # Temp file for subshell communication
 _GH_RESULT_FILE="/tmp/sat-gh-result-$$"
 
+# In-memory cache for release binaries
+declare -A _RELEASE_CACHE
+
 # Shared GitHub API wrapper
 _gh_api() {
     local endpoint="$1"
@@ -27,6 +30,32 @@ _fetch_tree() {
         tree=$(_gh_api "repos/$repo/git/trees/master?recursive=1" | jq -r '.tree[].path' 2>/dev/null)
 
     echo "$tree"
+}
+
+# Get binary names from latest release (cached)
+_get_release_binaries() {
+    local repo="$1"
+
+    # Check in-memory cache
+    [[ -n "${_RELEASE_CACHE[$repo]}" ]] && echo "${_RELEASE_CACHE[$repo]}" && return 0
+
+    [[ -n "$SAT_DEBUG" ]] && echo "[debug]   fetching release binaries for $repo" >&2
+
+    # Fetch latest release assets
+    local assets=$(_gh_api "repos/$repo/releases/latest" | jq -r '.assets[]?.name' 2>/dev/null)
+    [[ -z "$assets" ]] && return 1
+
+    # Extract binary names (strip platform suffixes and extensions)
+    # Examples: saul-linux-amd64 → saul, tool-darwin-arm64.exe → tool
+    local bins=$(echo "$assets" | \
+        grep -vE '\.(zip|tar\.gz|sig|sha256|txt|md)$' | \
+        sed -E 's/-(linux|darwin|windows|amd64|arm64|x86_64|aarch64|i686|armv7l).*$//' | \
+        sort -u | \
+        tr '\n' ' ')
+
+    # Cache result
+    _RELEASE_CACHE[$repo]="$bins"
+    echo "$bins"
 }
 
 # Write result to temp file (for subshell communication)
@@ -92,15 +121,41 @@ _install_huber() {
     command -v huber &>/dev/null || return 1
     _run_quiet huber install "$repo_path" || return 1
 
-    local huber_bin="$HOME/.huber/bin/$repo_name"
-    if [[ -x "$huber_bin" ]]; then
-        mkdir -p "$HOME/.local/bin"
-        ln -sf "$huber_bin" "$HOME/.local/bin/$repo_name"
-        _gh_set_result "$repo_name" "gh:$repo_path"
-        return 0
+    # Get release binary names from GitHub API (cached)
+    local release_bins=$(_get_release_binaries "$repo_path")
+    local huber_bin=""
+
+    # Try release names first (e.g., "saul" from better-curl-saul)
+    if [[ -n "$release_bins" ]]; then
+        [[ -n "$SAT_DEBUG" ]] && echo "[debug]   trying release names: $release_bins" >&2
+        for bin in $release_bins; do
+            if [[ -x "$HOME/.huber/bin/$bin" ]]; then
+                huber_bin="$HOME/.huber/bin/$bin"
+                [[ -n "$SAT_DEBUG" ]] && echo "[debug]   found via release name: $bin" >&2
+                break
+            fi
+        done
     fi
 
-    return 1
+    # Fallback to exact repo name
+    if [[ -z "$huber_bin" && -x "$HOME/.huber/bin/$repo_name" ]]; then
+        huber_bin="$HOME/.huber/bin/$repo_name"
+        [[ -n "$SAT_DEBUG" ]] && echo "[debug]   found via repo name: $repo_name" >&2
+    fi
+
+    # Fallback to aggressive search (current behavior)
+    if [[ -z "$huber_bin" ]]; then
+        [[ -n "$SAT_DEBUG" ]] && echo "[debug]   trying aggressive search" >&2
+        local search_pattern="${repo_name//-/[-_]?}"  # Allow - or _ or nothing
+        huber_bin=$(find "$HOME/.huber/bin/" -maxdepth 1 -type l -iname "*${repo_name%%-*}*" 2>/dev/null | head -1)
+        [[ -z "$huber_bin" || ! -x "$huber_bin" ]] && return 1
+    fi
+
+    local bin_name=$(basename "$huber_bin")
+    mkdir -p "$HOME/.local/bin"
+    ln -sf "$huber_bin" "$HOME/.local/bin/$bin_name"
+    _gh_set_result "$bin_name" "gh:$repo_path"
+    return 0
 }
 
 # Method 2: Go (build from GitHub)
@@ -112,7 +167,6 @@ _install_go() {
     command -v go &>/dev/null || return 1
     echo "$tree" | grep -q '^go.mod$' || return 1
 
-    repo_path="${repo_path,,}"
     local go_bin go_path go_subdir=""
 
     go_bin=$(echo "$tree" | grep -oP '^cmd/\K[^/]+(?=/main\.go$)' | head -1)
