@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # scan.sh - Scan ecosystem directories and add found packages to manifest
 
+source "$SAT_LIB/sources/flatpak.sh"
+
 sat_scan() {
     echo "Scanning ecosystems..."
 
@@ -175,8 +177,12 @@ sat_scan() {
         while read -r app_id; do
             [[ -z "$app_id" ]] && continue
             # Use last component as prog name (org.gimp.GIMP → gimp)
-            prog=$(echo "$app_id" | awk -F. '{print tolower($NF)}')
-            _try_add_tool "$prog" "flatpak:$app_id" && ((added++))
+            prog=$(get_flatpak_shortname "$app_id")
+            if _try_add_tool "$prog" "flatpak:$app_id"; then
+                ((added++))
+                # Create wrapper for convenient CLI launching
+                create_flatpak_wrapper "$prog" "$app_id"
+            fi
         done < <(flatpak list --app --columns=application 2>/dev/null)
     fi
 
@@ -202,6 +208,9 @@ sat_scan() {
             _try_add_tool "$prog" "$src" && ((added++))
         done
     fi
+
+    # Clean up stale flatpak wrappers
+    cleanup_flatpak_wrappers
 
     echo ""
     [[ $pruned -gt 0 ]] && echo "Pruned $pruned entries"
