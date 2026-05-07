@@ -155,7 +155,7 @@ sat_install() {
             local display=$(source_display "$existing_src")
             local color=$(source_color "$display")
             printf "%-30s [${color}%s${C_RESET}]\n" "$PROGRAM already installed" "$display"
-            printf "  ${C_DIM}Use $PROGRAM:sys :brew :nix :rs :py :js :go to force${C_RESET}\n"
+            printf "  ${C_DIM}Use $PROGRAM:sys :brew :nix :fpk :rs :py :js :go :img to force${C_RESET}\n"
             continue
         fi
 

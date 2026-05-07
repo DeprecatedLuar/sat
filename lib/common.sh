@@ -286,9 +286,10 @@ parse_tool_spec() {
             go)              _TOOL_SOURCE="go" ;;
             brew)            _TOOL_SOURCE="brew" ;;
             nix)             _TOOL_SOURCE="nix" ;;
+            fpk|flatpak)     _TOOL_SOURCE="flatpak" ;;
             gh|github)       _TOOL_SOURCE="gh" ;;
             release|rel)     _TOOL_SOURCE="gh-release" ;;
-            appimage)        _TOOL_SOURCE="gh-appimage" ;;
+            img|appimage)    _TOOL_SOURCE="gh-appimage" ;;
             script|sh)       _TOOL_SOURCE="gh-script" ;;
             *)               _TOOL_SOURCE="$src" ;;
         esac
