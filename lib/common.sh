@@ -290,7 +290,6 @@ parse_tool_spec() {
             gh|github)       _TOOL_SOURCE="gh" ;;
             release|rel)     _TOOL_SOURCE="gh-release" ;;
             img|appimage)    _TOOL_SOURCE="gh-appimage" ;;
-            script|sh)       _TOOL_SOURCE="gh-script" ;;
             *)               _TOOL_SOURCE="$src" ;;
         esac
     else

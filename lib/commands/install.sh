@@ -35,7 +35,6 @@ try_source() {
         gh)          install_github "$tool" "auto" ;;
         gh-release)  install_github "$tool" "release" ;;
         gh-appimage) install_github "$tool" "appimage" ;;
-        gh-script)   install_github "$tool" "script" ;;
         *)
             return 1
             ;;
@@ -161,21 +160,7 @@ sat_install() {
 
         # Forced source
         if [[ -n "$FORCE_SOURCE" ]]; then
-            # gh-script needs tty for tmux - run synchronously
-            if [[ "$FORCE_SOURCE" == "gh-script" ]]; then
-                if try_source "$PROGRAM" "$FORCE_SOURCE"; then
-                    local src="$FORCE_SOURCE"
-                    local bin_name="$PROGRAM"
-                    _gh_get_result && bin_name="$_GH_INSTALLED_BIN" && src="$_GH_INSTALL_SOURCE"
-                    _track_install "$bin_name" "$src"
-                    status_ok "$bin_name" "$src"
-                else
-                    status_fail "$PROGRAM not found in $(source_display "$FORCE_SOURCE")"
-                fi
-                continue
-            fi
-
-            # Other sources - background with spinner (or synchronous in debug mode)
+            # Background with spinner (or synchronous in debug mode)
             local _forced_result
             if [[ -n "$SAT_DEBUG" ]]; then
                 printf "${C_DIM}[debug] trying %s via %s${C_RESET}\n" "$PROGRAM" "$FORCE_SOURCE" >&2
