@@ -20,14 +20,33 @@ _gh_api() {
     fi
 }
 
+# Check if API response is a rate limit error
+_gh_check_rate_limit() {
+    local response="$1"
+    if echo "$response" | jq -e '.message' 2>/dev/null | grep -qi "rate limit"; then
+        echo "Error: GitHub API rate limit exceeded" >&2
+        echo "Tip: Authenticate with 'gh auth login' for higher limits (60/hour → 5000/hour)" >&2
+        return 1
+    fi
+    return 0
+}
+
 # Fetch repo tree structure (tries main, then master)
 _fetch_tree() {
     local repo="$1"
-    local tree
+    local response tree
 
-    tree=$(_gh_api "repos/$repo/git/trees/main?recursive=1" | jq -r '.tree[].path' 2>/dev/null)
-    [[ -z "$tree" || "$tree" == "null" ]] && \
-        tree=$(_gh_api "repos/$repo/git/trees/master?recursive=1" | jq -r '.tree[].path' 2>/dev/null)
+    # Try main branch
+    response=$(_gh_api "repos/$repo/git/trees/main?recursive=1")
+    _gh_check_rate_limit "$response" || return 1
+    tree=$(echo "$response" | jq -r '.tree[].path' 2>/dev/null)
+
+    # Fallback to master if main failed
+    if [[ -z "$tree" || "$tree" == "null" ]]; then
+        response=$(_gh_api "repos/$repo/git/trees/master?recursive=1")
+        _gh_check_rate_limit "$response" || return 1
+        tree=$(echo "$response" | jq -r '.tree[].path' 2>/dev/null)
+    fi
 
     echo "$tree"
 }
@@ -42,7 +61,10 @@ _get_release_binaries() {
     [[ -n "$SAT_DEBUG" ]] && echo "[debug]   fetching release binaries for $repo" >&2
 
     # Fetch latest release assets
-    local assets=$(_gh_api "repos/$repo/releases/latest" | jq -r '.assets[]?.name' 2>/dev/null)
+    local response=$(_gh_api "repos/$repo/releases/latest")
+    _gh_check_rate_limit "$response" || return 1
+
+    local assets=$(echo "$response" | jq -r '.assets[]?.name' 2>/dev/null)
     [[ -z "$assets" ]] && return 1
 
     # Extract binary names (strip platform suffixes and extensions)
@@ -78,20 +100,56 @@ _gh_get_result() {
 # SEARCH
 # =============================================================================
 
-# Search GitHub repositories
+# Search GitHub repositories (GraphQL for version data)
 search_github() {
     local query="$1"
     local limit="${2:-10}"
 
-    _gh_api "search/repositories?q=$query+in:name&per_page=$limit" 2>/dev/null
+    local graphql_query=$(cat <<EOF
+{
+  search(query: "$query", type: REPOSITORY, first: $limit) {
+    nodes {
+      ... on Repository {
+        nameWithOwner
+        description
+        stargazerCount
+        primaryLanguage {
+          name
+        }
+        latestRelease {
+          tagName
+        }
+      }
+    }
+  }
+}
+EOF
+)
+
+    local response
+    if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+        response=$(gh api graphql -f query="$graphql_query" 2>/dev/null)
+    else
+        # Curl fallback (with optional GITHUB_TOKEN support)
+        local auth_header=""
+        [[ -n "$GITHUB_TOKEN" ]] && auth_header="Authorization: bearer $GITHUB_TOKEN"
+
+        response=$(curl -sS "https://api.github.com/graphql" \
+            ${auth_header:+-H "$auth_header"} \
+            -H "Content-Type: application/json" \
+            -d "{\"query\":$(echo "$graphql_query" | jq -Rs .)}" 2>/dev/null)
+    fi
+
+    _gh_check_rate_limit "$response" || return 1
+    echo "$response"
 }
 
 # Find best matching GitHub repo (with filtering)
 search_github_best_match() {
     local query="$1"
-    local gh_data=$(search_github "$query" 10)
+    local gh_data=$(search_github "$query" 10) || return 1
 
-    echo "$gh_data" | jq -r '.items[]? | "\(.full_name)|\(.language // "")"' | \
+    echo "$gh_data" | jq -r '.data.search.nodes[]? | "\(.nameWithOwner)|\(.primaryLanguage.name // "")"' | \
         awk -F'|' -v q="$query" '
         BEGIN { IGNORECASE=1 }
         {

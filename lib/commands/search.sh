@@ -280,7 +280,7 @@ sat_search() {
 
         local results
         if [[ "$func" == "github" ]]; then
-            results=$(search_github "$QUERY" 10 | jq -r '.items[]? | "\(.full_name) (\(.language // "unknown" | ascii_downcase)) *\(.stargazers_count) - \(.description // "" | split("\n")[0] | .[0:50])"' 2>/dev/null)
+            results=$(search_github "$QUERY" 10 | jq -r '.data.search.nodes[]? | "\(.nameWithOwner) \(.latestRelease.tagName // "(no releases)") - \(.description // "" | split("\n")[0] | .[0:50])"' 2>/dev/null)
         else
             results=$(search_$func "$QUERY")
         fi
@@ -313,10 +313,10 @@ sat_search() {
     wait
 
     # Process GitHub for display + extract Python repos for PyPI lookup
-    jq -r '.items[]? | "\(.full_name) (\(.language // "unknown" | ascii_downcase)) *\(.stargazers_count) - \(.description // "" | split("\n")[0] | .[0:50])"' \
+    jq -r '.data.search.nodes[]? | "\(.nameWithOwner) \(.latestRelease.tagName // "(no releases)") - \(.description // "" | split("\n")[0] | .[0:50])"' \
         < "$tmpdir/github_raw" 2>/dev/null > "$tmpdir/github"
 
-    local python_repos=$(jq -r '.items[]? | select(.language == "Python") | .name' < "$tmpdir/github_raw" 2>/dev/null | head -5)
+    local python_repos=$(jq -r '.data.search.nodes[]? | select(.primaryLanguage.name == "Python") | .nameWithOwner | split("/")[1]' < "$tmpdir/github_raw" 2>/dev/null | head -5)
     touch "$tmpdir/python"
 
     search_pypi "$QUERY" >> "$tmpdir/python" &

@@ -31,14 +31,23 @@ sat_clone() {
 
     [[ -z "$input" ]] && { echo "Usage: sat clone <repo>"; return 1; }
 
+    # Handle full URLs directly
+    if [[ "$input" =~ ^(https?://|git@) ]]; then
+        local target_dir="${input##*/}"
+        target_dir="${target_dir%.git}"  # Remove .git suffix if present
+        echo "Cloning $input..."
+        git clone "$input" "$target_dir"
+        return
+    fi
+
     # Ensure user info exists and load it
     _ensure_user_info || return 1
     source "$SAT_DATA/user-info"
 
-    # Determine if input is full path (owner/repo) or short name
+    # Determine if input is owner/repo or short name
     local repo
     if [[ "$input" == */* ]]; then
-        # Full path provided
+        # owner/repo format
         repo="$input"
     else
         # Short name - use cached username
