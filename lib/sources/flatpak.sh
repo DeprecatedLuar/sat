@@ -114,7 +114,18 @@ install_flatpak() {
     local shortname=$(get_flatpak_shortname "$app_id")
     create_flatpak_wrapper "$shortname" "$app_id"
 
+    # Export app ID for install tracking
+    _FLATPAK_APP_ID="$app_id"
+
     return 0
+}
+
+# Get installed version of flatpak app
+get_version_from_flatpak() {
+    local app_id="$1"
+    command -v flatpak &>/dev/null || return 1
+    flatpak list --app --columns=application,version 2>/dev/null | \
+        awk -v id="$app_id" '$1 == id {print $2}'
 }
 
 # Uninstall flatpak package
@@ -147,4 +158,36 @@ uninstall_flatpak() {
     fi
 
     return 0
+}
+
+# Update flatpak package
+update_flatpak() {
+    local tool="$1"
+    local app_id="$2"  # Format: org.app.Name from flatpak:* manifest
+    _run_quiet flatpak update -y "$app_id"
+}
+
+# Check if flatpak package is outdated
+check_outdated_flatpak() {
+    local tool="$1"
+    local app_id="$2"  # Format: org.app.Name from flatpak:* manifest
+
+    command -v flatpak &>/dev/null || return 1
+
+    # Try manifest first, fall back to flatpak list
+    local current=$(get_source_version "$(manifest_get "$tool")")
+    if [[ -z "$current" ]]; then
+        current=$(flatpak list --app --columns=application,version 2>/dev/null | \
+            awk -v id="$app_id" '$1 == id {print $2}')
+    fi
+    [[ -z "$current" ]] && return 1
+
+    # Get latest available version from flathub
+    local latest=$(flatpak remote-info flathub "$app_id" 2>/dev/null | \
+        grep -oP '^\s*Version:\s*\K.+' | tr -d '[:space:]')
+    [[ -z "$latest" ]] && return 1
+
+    # Return if versions differ (outdated)
+    [[ "$current" != "$latest" ]] || return 1
+    echo "$current $latest"
 }

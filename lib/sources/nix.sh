@@ -30,8 +30,45 @@ install_nix() {
     _run_quiet nix-env -iA "nixpkgs.$tool"
 }
 
+# Get installed version of Nix package
+get_version_from_nix() {
+    local tool="$1"
+    command -v nix-env &>/dev/null || return 1
+    nix-env -q "$tool" 2>/dev/null | grep -oP "\d[\d.]+"
+}
+
 # Uninstall Nix package
 uninstall_nix() {
     local pkg="$1"
     nix-env --uninstall "$pkg" 2>/dev/null || nix profile remove "$pkg"
+}
+
+# Update Nix package
+update_nix() {
+    local tool="$1"
+    _run_quiet nix-env -iA "nixpkgs.$tool"
+}
+
+# Check if nix package is outdated
+# For nixos source: skip (system packages managed declaratively)
+# For nix source: check (user packages via nix-env)
+check_outdated_nix() {
+    local tool="$1"
+    local source_type="${2:-nix}"  # Optional: nix or nixos
+    command -v nix-env &>/dev/null || return 1
+
+    # Skip nixos source - those are system packages managed declaratively
+    # Use 'nixos-rebuild switch' after updating channels for system packages
+    if [[ "$source_type" == "nixos" ]]; then
+        return 1
+    fi
+
+    # Try manifest first, fall back to nix-env query
+    local current=$(get_source_version "$(manifest_get "$tool")")
+    [[ -z "$current" ]] && current=$(nix-env -q "$tool" 2>/dev/null | grep -oP "\d[\d.]+")
+    [[ -z "$current" ]] && return 1
+
+    local latest=$(nix-env -qaA "nixpkgs.$tool" 2>/dev/null | grep -oP "\d[\d.]+")
+    [[ -z "$latest" || "$current" == "$latest" ]] && return 1
+    echo "$current $latest"
 }

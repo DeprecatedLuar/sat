@@ -329,7 +329,7 @@ sat_search() {
     sort -u "$tmpdir/python" -o "$tmpdir/python" 2>/dev/null
 
     # Display results
-    declare -A color_map=([system]="apt" [flatpak]="flatpak" [rust]="cargo" [python]="uv" [node]="npm" [github]="repo" [brew]="brew" [nix]="nix")
+    declare -A color_map=([system]="apt" [flatpak]="flatpak" [rust]="cargo" [python]="uv" [node]="npm" [github]="github" [brew]="brew" [nix]="nix")
     declare -A light_map=([system]="$C_SYSTEM_L" [flatpak]="$C_FLATPAK_L" [rust]="$C_RUST_L" [python]="$C_PYTHON_L" [node]="$C_NODE_L" [github]="$C_REPO_L" [brew]="$C_BREW_L" [nix]="$C_NIX_L")
 
     for source in system brew nix rust python node github flatpak; do

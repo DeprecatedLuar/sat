@@ -13,7 +13,7 @@ C_NODE=$'\033[0;92m'      # Bright green - Node/npm
 C_PYTHON=$'\033[0;94m'    # Blue - Python/uv
 C_SYSTEM=$'\033[0;97m'    # Bright white - System packages
 C_FLATPAK=$'\033[0;95m'   # Bright magenta - Flatpak
-C_REPO=$'\033[38;2;140;140;140m'  # Medium gray - GitHub repos
+C_REPO=$'\033[38;2;180;180;180m'  # Soft gray - GitHub repos
 C_SAT=$'\033[0;36m'       # Cyan - Sat scripts
 C_GO=$'\033[0;96m'        # Bright Cyan - Go
 C_BREW=$'\033[0;93m'      # Bright yellow - Homebrew
@@ -27,7 +27,7 @@ C_NODE_L=$'\033[38;2;160;210;160m'    # Soft mint
 C_PYTHON_L=$'\033[38;2;220;210;160m'  # Soft cream
 C_SYSTEM_L=$'\033[38;2;160;180;220m'  # Soft sky blue
 C_FLATPAK_L=$'\033[38;2;220;160;220m' # Soft magenta
-C_REPO_L=$'\033[38;2;180;180;180m'    # Soft gray
+C_REPO_L=$'\033[38;2;140;140;140m'    # Medium gray
 C_GO_L=$'\033[38;2;160;210;210m'      # Soft teal
 C_BREW_L=$'\033[38;2;230;175;130m'    # Soft amber
 C_NIX_L=$'\033[38;2;126;186;228m'     # Light blue #7EBAE4
@@ -125,31 +125,8 @@ touch "$SAT_MANIFEST" "$SAT_SHELL_MASTER"
 _ensure_os_info
 source "$SAT_DATA/os-info"
 
-# =============================================================================
-# MANIFEST API WRAPPERS
-# =============================================================================
-# When running from binary: use internal _ functions (fast, no subprocess)
-# When running from lib files: call sat internal API (subprocess)
-
-# sat-manifest (system manifest)
-manifest_add()    { declare -F _sat_manifest_add    &>/dev/null && _sat_manifest_add "$@"    || sat internal sat-manifest add "$1" "$2"; }
-manifest_get()    { declare -F _sat_manifest_get    &>/dev/null && _sat_manifest_get "$@"    || sat internal sat-manifest get "$1"; }
-manifest_remove() { declare -F _sat_manifest_remove &>/dev/null && _sat_manifest_remove "$@" || sat internal sat-manifest remove "$1"; }
-manifest_has()    { declare -F _sat_manifest_has    &>/dev/null && _sat_manifest_has "$@"    || sat internal sat-manifest has "$1"; }
-
-# shell-manifest (master manifest)
-master_add()         { declare -F _shell_manifest_add        &>/dev/null && _shell_manifest_add "$@"        || sat internal shell-manifest add "$1" "$2" "$3"; }
-master_get_pids()    { declare -F _shell_manifest_pids       &>/dev/null && _shell_manifest_pids "$@"       || sat internal shell-manifest pids "$1" "$2"; }
-master_has_tool()    { declare -F _shell_manifest_has        &>/dev/null && _shell_manifest_has "$@"        || sat internal shell-manifest has "$1"; }
-master_remove()      { declare -F _shell_manifest_remove     &>/dev/null && _shell_manifest_remove "$@"     || sat internal shell-manifest remove "$1" "$2" "$3"; }
-master_remove_tool() { declare -F _shell_manifest_remove_all &>/dev/null && _shell_manifest_remove_all "$@" || sat internal shell-manifest remove-all "$1"; }
-master_promote()     { declare -F _shell_manifest_promote    &>/dev/null && _shell_manifest_promote "$@"    || sat internal shell-manifest promote "$1" "$2"; }
-
-# pid-manifest (session manifest)
-pid_manifest_add()    { declare -F _pid_manifest_add    &>/dev/null && _pid_manifest_add "$@"    || sat internal pid-manifest add "$1" "$2" "$3"; }
-pid_manifest_tools()  { declare -F _pid_manifest_tools  &>/dev/null && _pid_manifest_tools "$@"  || sat internal pid-manifest tools "$1"; }
-pid_manifest_source() { declare -F _pid_manifest_source &>/dev/null && _pid_manifest_source "$@" || sat internal pid-manifest source "$1" "$2"; }
-pid_manifest_remove() { declare -F _pid_manifest_remove &>/dev/null && _pid_manifest_remove "$@" || sat internal pid-manifest remove "$1"; }
+# Load manifest API (all manifest operations)
+source "$SAT_LIB/manifest.sh"
 
 # Animated status output (legacy)
 spin() {
@@ -198,6 +175,21 @@ spin_probe() {
     printf "\r%-50s\r" ""
 }
 
+# Run function with spinner (or direct output in debug mode)
+# Usage: run_with_spinner "tool_name" "source_type" function_name [args...]
+run_with_spinner() {
+    local tool="$1" source="$2" func="$3"
+    shift 3
+
+    if [[ -n "$SAT_DEBUG" ]]; then
+        "$func" "$@"
+    else
+        "$func" "$@" &
+        spin_with_style "$tool" $! "$source"
+        wait $!
+    fi
+}
+
 # Run command quietly (suppressed) unless SAT_DEBUG is set
 _run_quiet() { [[ -n "$SAT_DEBUG" ]] && "$@" || "$@" &>/dev/null; }
 
@@ -228,6 +220,7 @@ source_display() {
         cargo)        echo "rust" ;;
         go:*)         echo "go" ;;
         go)           echo "go" ;;
+        gh)           echo "github" ;;     # Plain GitHub source
         repo:*/*)     echo "github" ;;     # Has owner/repo metadata
         gh:*/*)       echo "github" ;;     # Has owner/repo metadata
         repo)         echo "unknown" ;;    # Bare repo (no metadata)
@@ -248,7 +241,7 @@ source_light() {
         uv|pip|python)                 printf '%s' "$C_PYTHON_L" ;;
         cargo|rust)                    printf '%s' "$C_RUST_L" ;;
         apt|apk|pacman|dnf|pkg|system) printf '%s' "$C_SYSTEM_L" ;;
-        sat|github)                    printf '%s' "$C_REPO_L" ;;
+        sat|github|gh)                 printf '%s' "$C_REPO_L" ;;
         repo:*/*)                      printf '%s' "$C_REPO_L" ;;  # GitHub with metadata
         gh:*/*)                        printf '%s' "$C_REPO_L" ;;  # GitHub with metadata
         appimage|appimage:*)           printf '%s' "$C_APPIMAGE_L" ;;

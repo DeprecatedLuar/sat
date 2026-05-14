@@ -335,3 +335,63 @@ uninstall_github() {
     # Also remove huber symlink if it exists
     rm -f "$HOME/.huber/bin/$pkg" 2>/dev/null
 }
+
+# Update GitHub package (huber-managed only)
+update_github() {
+    local tool="$1"
+    local repo="$2"  # Format: owner/repo from gh:* manifest
+
+    command -v huber &>/dev/null || return 1
+    _run_quiet huber update "$repo"
+}
+
+# Query latest version from GitHub releases (before install)
+query_latest_version_github() {
+    local repo="$1"  # Format: owner/repo
+    github_api_get "repos/$repo/releases/latest" | jq -r '.tag_name // empty'
+}
+
+# Get installed version from GitHub release (via huber or GitHub API)
+get_version_from_github() {
+    local repo="$1"  # Format: owner/repo
+
+    # Try huber first (if installed via huber)
+    if command -v huber &>/dev/null; then
+        local info=$(huber info "$repo" 2>/dev/null)
+        if [[ -n "$info" ]]; then
+            echo "$info" | grep -oP 'Version:\s*\K\S+'
+            return 0
+        fi
+    fi
+
+    # Fallback: query GitHub API for latest release tag
+    query_latest_version_github "$repo"
+}
+
+# Check if GitHub package is outdated (huber-managed)
+check_outdated_github() {
+    local tool="$1"
+    local repo="$2"  # Format: owner/repo from gh:* manifest
+
+    command -v huber &>/dev/null || return 1
+
+    # Try manifest first
+    local current=$(get_source_version "$(manifest_get "$tool")")
+
+    # Fall back to huber dryrun
+    if [[ -z "$current" ]]; then
+        local dryrun=$(huber update --dryrun 2>&1)
+        [[ -z "$dryrun" ]] && return 1
+
+        local line=$(echo "$dryrun" | grep -i "Updating package $repo from")
+        [[ -z "$line" ]] && return 1
+
+        current=$(echo "$line" | grep -oP 'from \K\S+')
+    fi
+    [[ -z "$current" ]] && return 1
+
+    # Get latest from GitHub
+    local latest=$(github_api_get "repos/$repo/releases/latest" | jq -r '.tag_name // empty')
+    [[ -z "$latest" || "$current" == "$latest" ]] && return 1
+    echo "$current $latest"
+}

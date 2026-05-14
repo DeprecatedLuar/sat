@@ -3,7 +3,7 @@
 
 sat_track() {
     for prog in "$@"; do
-        if [[ -n "$(_sat_manifest_get "$prog")" ]]; then
+        if manifest_has "$prog"; then
             echo "$prog: already tracked"
             continue
         fi
@@ -14,7 +14,7 @@ sat_track() {
         fi
         src=$(detect_source "$prog")
         [[ -z "$src" || "$src" == "unknown" ]] && { echo "$prog: unknown source, skipping"; continue; }
-        _sat_manifest_add "$prog" "$src"
+        manifest_add "$prog" "$src"
         display=$(source_display "$src")
         color=$(source_color "$display")
         printf "%-20s [${color}%s${C_RESET}] tracked\n" "$prog" "$display"

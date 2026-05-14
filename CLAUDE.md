@@ -16,15 +16,17 @@ sat (router + offline commands)
 └── [ROUTER]               # Routes to library for online commands
 
 lib/
-├── common.sh              # Shared utilities, manifests, cleanup functions, _run_quiet()
+├── common.sh              # Shared utilities, UI, cleanup functions, _run_quiet()
+├── manifest.sh            # Unified manifest API (low-level + high-level)
 ├── commands/
-│   ├── install.sh         # sat_install() + _track_install() (manifest routing)
+│   ├── install.sh         # sat_install() - uses track_install() from manifest.sh
 │   ├── search.sh          # sat_search() + per-ecosystem search functions
 │   ├── shell.sh           # sat_shell() - thin wrapper around sat_install
-│   └── ...                # pull, update, clone, internal, list, scan, uninstall, etc.
-└── installation/          # Modular installers (one per package manager)
+│   ├── internal.sh        # Manifest internals (_sat_manifest_*, API router)
+│   └── ...                # pull, update, clone, list, scan, uninstall, track, etc.
+└── sources/               # Modular installers (one per package manager)
     ├── github.sh          # install_from_github(), AppImage, language-based routing
-    └── ...                # brew, cargo, go, nix, npm, sat, system, uv
+    └── ...                # brew, cargo, go, nix, npm, sat, system, uv, flatpak
 ```
 
 ### Key Concepts
@@ -87,7 +89,21 @@ Shell sets `SAT_MANIFEST_TARGET=session` before calling `sat_install`, routing t
 
 **Orphan cleanup:** `cleanup_orphaned_sessions()` runs on every sat command, scans master manifest for dead PIDs, runs `cleanup_session()` for each
 
-## Internal Manifest API
+## Manifest API Architecture
+
+All manifest operations are centralized in `lib/manifest.sh`, providing a clean two-layer API:
+
+**Low-level API** (direct manifest access):
+- `manifest_add(tool, source)`, `manifest_get(tool)`, `manifest_has(tool)`, `manifest_remove(tool)`
+- `master_add(tool, source, pid)`, `master_promote(tool, source)`, `master_has_tool(tool)`, etc.
+- `pid_manifest_add(pid, tool, source)`, `pid_manifest_tools(pid)`, etc.
+
+**High-level API** (context-aware):
+- `track_install(tool, source)` - routes to appropriate manifest based on `SAT_MANIFEST_TARGET`
+
+All functions auto-detect context (binary vs remote) and route appropriately.
+
+## Internal Manifest Implementation
 
 The binary exposes `sat internal <subcommand>` for manifest manipulation. Lib files use this API when running remotely (e.g., inside tmux sessions) to ensure all manifest operations go through a single source of truth.
 

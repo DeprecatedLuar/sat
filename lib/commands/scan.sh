@@ -2,6 +2,15 @@
 # scan.sh - Scan ecosystem directories and add found packages to manifest
 
 source "$SAT_LIB/sources/flatpak.sh"
+source "$SAT_LIB/sources/cargo.sh"
+source "$SAT_LIB/sources/npm.sh"
+source "$SAT_LIB/sources/brew.sh"
+source "$SAT_LIB/sources/nix.sh"
+source "$SAT_LIB/sources/go.sh"
+source "$SAT_LIB/sources/uv.sh"
+source "$SAT_LIB/sources/system.sh"
+source "$SAT_LIB/sources/github.sh"
+source "$SAT_LIB/sources/appimage.sh"
 
 sat_scan() {
     echo "Scanning ecosystems..."
@@ -51,16 +60,56 @@ sat_scan() {
     }
 
     # Try to add tool to manifest (returns 0 on success, 1 if skipped)
+    # Args: prog, source_or_full_string
+    # If source contains colons, it's already formatted (source:identity:version)
     _try_add_tool() {
-        local prog="$1" src="$2"
-        is_excluded "$prog" "$src" && return 1
-        [[ -n "$(_sat_manifest_get "$prog")" ]] && return 1
-        _shell_manifest_has "$prog" && return 1
+        local prog="$1" src_input="$2"
 
-        _sat_manifest_add "$prog" "$src"
-        local display=$(source_display "$src")
+        # Parse source string (might already include identity)
+        local source identity version
+        source=$(get_source_type "$src_input")
+        identity=$(get_source_identity "$src_input")
+
+        # Skip if excluded or already tracked
+        is_excluded "$prog" "$source" && return 1
+        manifest_has "$prog" && return 1
+        master_has_tool "$prog" && return 1
+
+        # Detect identity (for sources that need it)
+        if [[ -z "$identity" ]]; then
+            case "$source" in
+                npm) identity=$(get_npm_package_name "$prog") ;;
+            esac
+        fi
+
+        # Detect version based on source type
+        if [[ -z "$version" ]]; then
+            case "$source" in
+                npm)     version=$(get_version_from_npm "$prog") ;;
+                cargo)   version=$(get_version_from_cargo "$prog") ;;
+                brew)    version=$(get_version_from_brew "$prog") ;;
+                nix)     version=$(get_version_from_nix "$prog") ;;
+                go)      version=$(get_version_from_go "$prog") ;;
+                uv)      version=$(get_version_from_uv "$prog") ;;
+                flatpak) version=$(get_version_from_flatpak "$identity") ;;
+                appimage) [[ -n "$identity" ]] && version=$(get_version_from_appimage "$identity") ;;
+                gh)      [[ -n "$identity" ]] && version=$(get_version_from_github "$identity") ;;
+                apt|pacman|apk|dnf|nixos) version=$(get_version_from_system "$prog") ;;
+            esac
+        fi
+
+        # Build full source string and add to manifest
+        local src_string=$(build_source_string "$source" "$identity" "$version")
+        manifest_add "$prog" "$src_string"
+
+        # Display with version if available
+        local display=$(source_display "$source")
         local color=$(source_color "$display")
-        printf "  ${color}+${C_RESET} %-20s [${color}%s${C_RESET}]\n" "$prog" "$display"
+        if [[ -n "$version" ]]; then
+            printf "  ${color}+${C_RESET} %-20s [${color}%s${C_RESET}] ${C_DIM}v%s${C_RESET}\n" "$prog" "$display" "$version"
+        else
+            printf "  ${color}+${C_RESET} %-20s [${color}%s${C_RESET}]\n" "$prog" "$display"
+        fi
         return 0
     }
 
@@ -86,9 +135,14 @@ sat_scan() {
                     reason="brew dep"
                 fi
             # Check if managed as symlink in ~/.local/bin (dotfiles, etc.)
+            # But exclude sat-managed symlinks (appimages, flatpak wrappers)
             elif [[ -L "$HOME/.local/bin/$prog" ]]; then
-                should_prune=true
-                reason="symlink"
+                local target=$(readlink -f "$HOME/.local/bin/$prog" 2>/dev/null)
+                # Skip if symlink points to sat-managed directories
+                if [[ ! "$target" =~ ^$HOME/.local/share/sat/ ]]; then
+                    should_prune=true
+                    reason="symlink"
+                fi
             fi
 
             if $should_prune; then
@@ -186,13 +240,34 @@ sat_scan() {
         done < <(flatpak list --app --columns=application 2>/dev/null)
     fi
 
-    # AppImages: scan sat's appimage directory
+    # Helper: Extract GitHub repo from AppImage metadata
+    _extract_appimage_repo() {
+        local appimage_path="$1"
+        # Look for zsync update info embedded in AppImage
+        local repo_info=$(strings "$appimage_path" 2>/dev/null | grep -oP 'gh-releases-zsync\|\K[^|]+\|[^|]+' | head -1)
+        if [[ -n "$repo_info" ]]; then
+            # Format: owner|repo-name → owner/repo-name
+            echo "$repo_info" | tr '|' '/'
+            return 0
+        fi
+        return 1
+    }
+
+    # AppImages: scan sat's appimage directory with repo extraction
     local appimage_dir="$HOME/.local/share/sat/bin/appimages"
     if [[ -d "$appimage_dir" ]]; then
         for bin in "$appimage_dir"/*; do
             [[ ! -x "$bin" ]] && continue
             prog=$(basename "$bin")
-            _try_add_tool "$prog" "appimage" && ((added++))
+
+            # Try to extract GitHub repo from AppImage
+            local repo=$(_extract_appimage_repo "$bin")
+            if [[ -n "$repo" ]]; then
+                _try_add_tool "$prog" "appimage:$repo" && ((added++))
+            else
+                # Fallback: track without repo info
+                _try_add_tool "$prog" "appimage" && ((added++))
+            fi
         done
     fi
 

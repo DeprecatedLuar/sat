@@ -11,6 +11,22 @@ install_go() {
     _run_quiet go install "${go_pkg}@latest"
 }
 
+# Get installed version of Go package
+get_version_from_go() {
+    local tool="$1"
+    command -v go &>/dev/null || return 1
+
+    local bin_path=$(command -v "$tool" 2>/dev/null)
+    [[ -z "$bin_path" ]] && return 1
+
+    local version_info=$(go version -m "$bin_path" 2>/dev/null)
+    [[ -z "$version_info" ]] && return 1
+
+    local version=$(echo "$version_info" | grep "^\smod\s" | awk '{print $3}')
+    [[ "$version" == "(devel)" ]] && return 1
+    echo "$version"
+}
+
 # Install from GitHub repo with Go detection
 # Returns: binary name via stdout on success
 install_go_github() {
@@ -51,4 +67,41 @@ install_go_github() {
 uninstall_go() {
     local pkg="$1"
     rm -f "$GOPATH/bin/$pkg" "$HOME/go/bin/$pkg" 2>/dev/null
+}
+
+# Update Go package
+update_go() {
+    local tool="$1"
+    local import_path="$2"  # Full import path from go:* manifest
+    _run_quiet go install "${import_path}@latest"
+}
+
+# Check if Go package is outdated
+check_outdated_go() {
+    local tool="$1"
+    local import_path="$2"
+
+    command -v go &>/dev/null || return 1
+    [[ -z "$import_path" ]] && return 1
+
+    # Try manifest first
+    local current=$(get_source_version "$(manifest_get "$tool")")
+
+    # Fall back to querying binary
+    if [[ -z "$current" || "$current" == "(devel)" ]]; then
+        local bin_path=$(command -v "$tool" 2>/dev/null)
+        [[ -z "$bin_path" ]] && return 1
+
+        local version_info=$(go version -m "$bin_path" 2>/dev/null)
+        [[ -z "$version_info" ]] && return 1
+
+        current=$(echo "$version_info" | grep "^\smod\s" | awk '{print $3}')
+    fi
+    [[ -z "$current" || "$current" == "(devel)" ]] && return 1
+
+    # Query Go proxy for latest version
+    local latest=$(curl -sS "https://proxy.golang.org/${import_path}/@latest" 2>/dev/null | jq -r '.Version // empty')
+    [[ -z "$latest" || "$current" == "$latest" ]] && return 1
+
+    echo "$current $latest"
 }

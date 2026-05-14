@@ -124,3 +124,69 @@ update_appimage() {
     # Re-download latest
     install_appimage "$repo"
 }
+
+# Get installed version of AppImage (from GitHub release tag)
+get_version_from_appimage() {
+    local repo="$1"  # Format: owner/repo
+    [[ -z "$repo" ]] && return 1
+
+    # Query GitHub for latest release tag
+    local release_info
+    if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+        release_info=$(gh api "repos/$repo/releases/latest" 2>/dev/null)
+    else
+        release_info=$(curl -sS "https://api.github.com/repos/$repo/releases/latest" 2>/dev/null)
+    fi
+
+    echo "$release_info" | jq -r '.tag_name // empty'
+}
+
+# Check if AppImage is outdated
+check_outdated_appimage() {
+    local tool="$1"
+    local repo="$2"  # Format: owner/repo from manifest appimage:owner/repo
+
+    [[ -z "$repo" ]] && return 1
+
+    # Try manifest first
+    local current=$(get_source_version "$(manifest_get "$tool")")
+
+    # Fall back to file timestamp if no version in manifest
+    if [[ -z "$current" ]]; then
+        local appimage_path="$HOME/.local/share/sat/bin/appimages/$tool"
+        [[ ! -f "$appimage_path" ]] && return 1
+        current="local"  # Use "local" as placeholder for file-based tracking
+    fi
+
+    # Get latest release info from GitHub
+    local release_info
+    if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+        release_info=$(gh api "repos/$repo/releases/latest" 2>/dev/null)
+    else
+        release_info=$(curl -sS "https://api.github.com/repos/$repo/releases/latest" 2>/dev/null)
+    fi
+    [[ -z "$release_info" ]] && return 1
+
+    local latest_tag=$(echo "$release_info" | jq -r '.tag_name // empty')
+    [[ -z "$latest_tag" ]] && return 1
+
+    # If we have a version, compare directly
+    if [[ "$current" != "local" ]]; then
+        [[ "$current" == "$latest_tag" ]] && return 1
+        echo "$current $latest_tag"
+        return 0
+    fi
+
+    # Otherwise fall back to timestamp comparison
+    local appimage_path="$HOME/.local/share/sat/bin/appimages/$tool"
+    local current_time=$(stat -c %Y "$appimage_path" 2>/dev/null || stat -f %m "$appimage_path" 2>/dev/null)
+    local published_at=$(echo "$release_info" | jq -r '.published_at // empty')
+    local release_time=$(date -d "$published_at" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$published_at" +%s 2>/dev/null)
+
+    if [[ -n "$release_time" && $release_time -gt $current_time ]]; then
+        echo "local $latest_tag"
+        return 0
+    fi
+
+    return 1
+}

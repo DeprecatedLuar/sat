@@ -14,6 +14,76 @@ source "$SAT_LIB/sources/flatpak.sh"
 source "$SAT_LIB/sources/sat.sh"
 
 # =============================================================================
+# VERSION DETECTION
+# =============================================================================
+
+# Query latest version from registry before install
+# Args: tool, source
+# Returns: version string (or empty if not available)
+query_version_before_install() {
+    local tool="$1" source="$2"
+
+    case "$source" in
+        npm)    query_latest_version_npm "$tool" ;;
+        cargo)  query_latest_version_cargo "$tool" ;;
+        uv)     query_latest_version_uv "$tool" ;;
+        brew)   query_latest_version_brew "$tool" ;;
+        *)      return 1 ;;  # No registry query available
+    esac
+}
+
+# Detect identity and version after successful install
+# Args: tool, source, [cached_version]
+# Outputs: identity (line 1), version (line 2)
+detect_install_metadata() {
+    local tool="$1" source_string="$2" cached_version="${3:-}"
+    local identity="" version="$cached_version"
+
+    # Parse source string (might be "gh:owner/repo" or "appimage:owner/repo")
+    local source=$(get_source_type "$source_string")
+    local existing_identity=$(get_source_identity "$source_string")
+
+    case "$source" in
+        npm)
+            identity=$(get_npm_package_name "$tool")
+            # Use cached version if available, else query installed
+            [[ -z "$version" ]] && version=$(get_version_from_npm "$tool")
+            ;;
+        cargo)
+            [[ -z "$version" ]] && version=$(get_version_from_cargo "$tool")
+            ;;
+        brew)
+            [[ -z "$version" ]] && version=$(get_version_from_brew "$tool")
+            ;;
+        nix)
+            [[ -z "$version" ]] && version=$(get_version_from_nix "$tool")
+            ;;
+        go)
+            [[ -z "$version" ]] && version=$(get_version_from_go "$tool")
+            ;;
+        uv)
+            [[ -z "$version" ]] && version=$(get_version_from_uv "$tool")
+            ;;
+        flatpak)
+            # Identity should be set by install_flatpak via _FLATPAK_APP_ID
+            identity="${_FLATPAK_APP_ID:-$existing_identity}"
+            [[ -n "$identity" && -z "$version" ]] && version=$(get_version_from_flatpak "$identity")
+            ;;
+        gh|appimage)
+            # Identity comes from source string (owner/repo)
+            identity="$existing_identity"
+            [[ -n "$identity" && -z "$version" ]] && version=$(get_version_from_github "$identity")
+            ;;
+        apt|pacman|apk|dnf|nixos)
+            [[ -z "$version" ]] && version=$(get_version_from_system "$tool")
+            ;;
+    esac
+
+    echo "$identity"
+    echo "$version"
+}
+
+# =============================================================================
 # SOURCE-SPECIFIC INSTALLATION
 # =============================================================================
 
@@ -42,13 +112,19 @@ try_source() {
 }
 
 # Install tool with fallback chain
-# Sets: _INSTALL_SOURCE (source that succeeded)
+# Sets: _INSTALL_SOURCE (source that succeeded), _CACHED_VERSION (from registry query)
 # Returns 0 on success, 1 if all sources fail
 install_with_fallback() {
     local tool="$1"
     _INSTALL_SOURCE=""
+    _CACHED_VERSION=""
 
     for source in "${INSTALL_ORDER[@]}"; do
+        # Query registry for version before attempting install
+        local queried_version=$(query_version_before_install "$tool" "$source" 2>/dev/null)
+        [[ -n "$SAT_DEBUG" && -n "$queried_version" ]] && \
+            printf "${C_DIM}[debug] registry version for %s: %s${C_RESET}\n" "$tool" "$queried_version" >&2
+
         local _result
         if [[ -n "$SAT_DEBUG" ]]; then
             printf "${C_DIM}[debug] trying %s via %s${C_RESET}\n" "$tool" "$source" >&2
@@ -59,6 +135,7 @@ install_with_fallback() {
             wait $!; _result=$?
         fi
         if [[ $_result -eq 0 ]]; then
+            _CACHED_VERSION="$queried_version"
             # For gh: get result from temp file
             if [[ "$source" == "gh" ]]; then
                 _gh_get_result
@@ -98,26 +175,6 @@ sat_install() {
         esac
     done
 
-    # Helper: route manifest writes based on context
-    # SAT_MANIFEST_TARGET=session → session + master manifest (temporary)
-    # SAT_MANIFEST_TARGET unset   → system manifest (permanent)
-    _track_install() {
-        local tool="$1" src="$2"
-
-        if [[ "$SAT_MANIFEST_TARGET" == "session" ]]; then
-            # Shell session: track in session + master manifest
-            pid_manifest_add "$SAT_SESSION" "$tool" "$src"
-            master_add "$tool" "$src" "$SAT_SESSION"
-         elif master_has_tool "$tool"; then
-            # Permanent install but tool exists in session: promote it
-            master_promote "$tool" "$src"
-            printf "  ${C_DIM}(promoted from shell session)${C_RESET}\n"
-        else
-            # Permanent install: system manifest
-            manifest_add "$tool" "$src"
-        fi
-    }
-
     for SPEC in "${SPECS[@]}"; do
         parse_tool_spec "$SPEC"
         local PROGRAM="$_TOOL_NAME"
@@ -128,11 +185,20 @@ sat_install() {
             local REPO_PATH="$PROGRAM"
             local REPO_NAME="${PROGRAM##*/}"
 
+            # Query latest release version from GitHub
+            local cached_version=$(query_latest_version_github "$REPO_PATH" 2>/dev/null)
+            [[ -n "$SAT_DEBUG" && -n "$cached_version" ]] && \
+                printf "${C_DIM}[debug] GitHub latest release: %s${C_RESET}\n" "$cached_version" >&2
+
             install_github "$REPO_PATH" "auto" &
             spin_probe "$REPO_NAME" $!
 
             if wait $! && _gh_get_result; then
-                _track_install "$_GH_INSTALLED_BIN" "$_GH_INSTALL_SOURCE"
+                local metadata identity version
+                metadata=$(detect_install_metadata "$_GH_INSTALLED_BIN" "$_GH_INSTALL_SOURCE" "$cached_version")
+                identity=$(echo "$metadata" | head -1)
+                version=$(echo "$metadata" | tail -1)
+                track_install "$_GH_INSTALLED_BIN" "$(get_source_type "$_GH_INSTALL_SOURCE")" "$identity" "$version"
                 status_ok "$_GH_INSTALLED_BIN" "$_GH_INSTALL_SOURCE"
             else
                 status_fail "$REPO_NAME not found"
@@ -142,15 +208,17 @@ sat_install() {
 
         # Already installed check
         if [[ -z "$FORCE_SOURCE" ]] && command -v "$PROGRAM" &>/dev/null; then
-            local existing_src=$(detect_source "$PROGRAM")
             if master_has_tool "$PROGRAM"; then
-                local display=$(source_display "$existing_src")
+                # Get full source string from master manifest (preserves identity:version)
+                local full_source=$(grep "^$PROGRAM:" "$SAT_SHELL_MASTER" 2>/dev/null | head -1 | cut -d: -f2)
+                local display=$(source_display "$(get_source_type "$full_source")")
                 local color=$(source_color "$display")
                 printf "%-30s [${color}%s${C_RESET}]\n" "$PROGRAM (shell session)" "$display"
-                master_promote "$PROGRAM" "$existing_src"
+                master_promote "$PROGRAM" "$full_source"
                 printf "  ${C_DIM}Promoted to system manifest${C_RESET}\n"
                 continue
             fi
+            local existing_src=$(detect_source "$PROGRAM")
             local display=$(source_display "$existing_src")
             local color=$(source_color "$display")
             printf "%-30s [${color}%s${C_RESET}]\n" "$PROGRAM already installed" "$display"
@@ -160,6 +228,11 @@ sat_install() {
 
         # Forced source
         if [[ -n "$FORCE_SOURCE" ]]; then
+            # Query registry for version before install
+            local cached_version=$(query_version_before_install "$PROGRAM" "$FORCE_SOURCE" 2>/dev/null)
+            [[ -n "$SAT_DEBUG" && -n "$cached_version" ]] && \
+                printf "${C_DIM}[debug] registry version for %s: %s${C_RESET}\n" "$PROGRAM" "$cached_version" >&2
+
             # Background with spinner (or synchronous in debug mode)
             local _forced_result
             if [[ -n "$SAT_DEBUG" ]]; then
@@ -177,8 +250,17 @@ sat_install() {
                 if [[ "$FORCE_SOURCE" == "gh" ]] && _gh_get_result; then
                     src="$_GH_INSTALL_SOURCE"
                     bin_name="$_GH_INSTALLED_BIN"
+                elif [[ "$FORCE_SOURCE" == "npm" ]] && [[ -n "$_NPM_INSTALLED_PKG" ]]; then
+                    bin_name="$_NPM_INSTALLED_PKG"
                 fi
-                _track_install "$bin_name" "$src"
+
+                # Detect identity and version (use cached version from registry query)
+                local metadata identity version
+                metadata=$(detect_install_metadata "$bin_name" "$src" "$cached_version")
+                identity=$(echo "$metadata" | head -1)
+                version=$(echo "$metadata" | tail -1)
+
+                track_install "$bin_name" "$(get_source_type "$src")" "$identity" "$version"
                 status_ok "$bin_name" "$src"
             else
                 # Show actual error if available, otherwise generic message
@@ -197,9 +279,19 @@ sat_install() {
         if install_with_fallback "$PROGRAM"; then
             local installed_name="$PROGRAM"
             [[ -n "$_GH_INSTALLED_BIN" ]] && installed_name="$_GH_INSTALLED_BIN"
-            _track_install "$installed_name" "$_INSTALL_SOURCE"
+            [[ -n "$_NPM_INSTALLED_PKG" ]] && installed_name="$_NPM_INSTALLED_PKG"
+
+            # Detect identity and version (use cached version from registry query)
+            local metadata identity version
+            metadata=$(detect_install_metadata "$installed_name" "$_INSTALL_SOURCE" "$_CACHED_VERSION")
+            identity=$(echo "$metadata" | head -1)
+            version=$(echo "$metadata" | tail -1)
+
+            track_install "$installed_name" "$(get_source_type "$_INSTALL_SOURCE")" "$identity" "$version"
             status_ok "$installed_name" "$_INSTALL_SOURCE"
             _GH_INSTALLED_BIN=""
+            _NPM_INSTALLED_PKG=""
+            _CACHED_VERSION=""
         else
             status_fail "$PROGRAM not found"
         fi

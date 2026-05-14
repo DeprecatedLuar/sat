@@ -23,6 +23,22 @@ search_brew() {
     fi
 }
 
+# Query latest version from Homebrew API (before install)
+query_latest_version_brew() {
+    local pkg="$1"
+
+    # Try formula first
+    local info=$(curl -sS "https://formulae.brew.sh/api/formula/$pkg.json" 2>/dev/null)
+    if echo "$info" | jq -e '.versions.stable' &>/dev/null; then
+        echo "$info" | jq -r '.versions.stable'
+        return
+    fi
+
+    # Try cask
+    info=$(curl -sS "https://formulae.brew.sh/api/cask/$pkg.json" 2>/dev/null)
+    echo "$info" | jq -r '.version // empty'
+}
+
 # Install from Homebrew
 install_brew() {
     local tool="$1"
@@ -65,8 +81,44 @@ install_brew() {
     return 1
 }
 
+# Get installed version of Homebrew package
+get_version_from_brew() {
+    local tool="$1"
+    command -v brew &>/dev/null || return 1
+    brew list --versions "$tool" 2>/dev/null | awk '{print $2}'
+}
+
 # Uninstall Homebrew package
 uninstall_brew() {
     local pkg="$1"
     brew uninstall "$pkg"
+}
+
+# Update Homebrew package
+update_brew() {
+    local tool="$1"
+    _run_quiet brew upgrade "$tool"
+}
+
+# Check if brew package is outdated
+check_outdated_brew() {
+    local tool="$1"
+    command -v brew &>/dev/null || return 1
+
+    # Try manifest first
+    local current=$(get_source_version "$(manifest_get "$tool")")
+
+    # Fall back to brew outdated if no manifest version
+    if [[ -z "$current" ]]; then
+        local line=$(brew outdated --verbose 2>/dev/null | grep "^$tool (")
+        [[ -z "$line" ]] && return 1
+        current=$(echo "$line" | grep -oP '\(\K[^)]+')
+    fi
+    [[ -z "$current" ]] && return 1
+
+    # Get latest from brew info
+    local latest=$(brew info --json=v2 "$tool" 2>/dev/null | \
+        jq -r '.formulae[0].versions.stable // .casks[0].version // empty')
+    [[ -z "$latest" || "$current" == "$latest" ]] && return 1
+    echo "$current $latest"
 }

@@ -100,6 +100,31 @@ install_system() {
     pkg_install "$tool" "$mgr"
 }
 
+# Get installed version of system package
+get_version_from_system() {
+    local tool="$1"
+    local mgr="$SAT_PKG_MANAGER"
+    [[ -z "$mgr" ]] && return 1
+
+    case "$mgr" in
+        apt)
+            dpkg -l "$tool" 2>/dev/null | awk '/^ii/ {print $3}'
+            ;;
+        pacman)
+            pacman -Q "$tool" 2>/dev/null | awk '{print $2}'
+            ;;
+        apk)
+            apk info -e "$tool" 2>/dev/null | grep -oP "${tool}-\K[0-9][\S]+"
+            ;;
+        dnf)
+            dnf list installed "$tool" 2>/dev/null | awk '/^'"$tool"'/ {print $2}'
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 # Uninstall system package
 # Delegates to cached package manager
 uninstall_system() {
@@ -107,4 +132,51 @@ uninstall_system() {
     local mgr="$SAT_PKG_MANAGER"
     [[ -z "$mgr" ]] && return 1
     pkg_remove "$pkg" "$mgr"
+}
+
+# Update system package
+update_system() {
+    local tool="$1"
+    local mgr="$SAT_PKG_MANAGER"
+    [[ -z "$mgr" ]] && return 1
+
+    case "$mgr" in
+        apt)    _run_quiet sudo apt-get install --only-upgrade -y "$tool" ;;
+        pacman) _run_quiet sudo pacman -S --noconfirm "$tool" ;;
+        apk)    _run_quiet sudo apk upgrade "$tool" ;;
+        dnf)    _run_quiet sudo dnf upgrade -y "$tool" ;;
+        *)      return 1 ;;
+    esac
+}
+
+# Check if system package is outdated
+check_outdated_system() {
+    local tool="$1"
+    local mgr="$SAT_PKG_MANAGER"
+    [[ -z "$mgr" ]] && return 1
+
+    # Try manifest first
+    local current=$(get_source_version "$(manifest_get "$tool")")
+
+    case "$mgr" in
+        apt)
+            # Fall back to apt if no manifest version
+            if [[ -z "$current" ]]; then
+                local line=$(apt list --upgradable 2>/dev/null | grep "^$tool/")
+                [[ -z "$line" ]] && return 1
+                current=$(echo "$line" | grep -oP 'upgradable from: \K[^]]+' | tr -d ']')
+            fi
+            [[ -z "$current" ]] && return 1
+
+            # Get latest from apt
+            local latest=$(apt list --upgradable 2>/dev/null | grep "^$tool/" | awk '{print $2}')
+            [[ -n "$latest" ]] || return 1
+            [[ "$current" == "$latest" ]] && return 1
+            echo "$current $latest"
+            ;;
+        *)
+            # pacman/apk/dnf don't have reliable per-tool outdated checks without sudo
+            return 1
+            ;;
+    esac
 }

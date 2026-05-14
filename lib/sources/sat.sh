@@ -15,3 +15,13 @@ uninstall_sat() {
     local pkg="$1"
     rm -f "$HOME/.local/bin/$pkg"
 }
+
+# Update sat wrapper script (not supported)
+update_sat() {
+    return 1  # Sat wrapper scripts cannot be updated in place
+}
+
+# Check if sat wrapper is outdated (not supported)
+check_outdated_sat() {
+    return 1  # Sat wrapper scripts don't have versions
+}

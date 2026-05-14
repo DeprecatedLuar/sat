@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
 # update.sh - Update packages installed via sat
 
-# Source GitHub installation for AppImage updates
+# Source all source modules
+source "$SAT_LIB/sources/brew.sh"
+source "$SAT_LIB/sources/cargo.sh"
+source "$SAT_LIB/sources/flatpak.sh"
+source "$SAT_LIB/sources/go.sh"
+source "$SAT_LIB/sources/nix.sh"
+source "$SAT_LIB/sources/npm.sh"
+source "$SAT_LIB/sources/uv.sh"
+source "$SAT_LIB/sources/system.sh"
 source "$SAT_LIB/sources/github.sh"
+source "$SAT_LIB/sources/appimage.sh"
+source "$SAT_LIB/sources/sat.sh"
 
 _update_tool() {
     local tool="$1"
@@ -14,59 +24,62 @@ _update_tool() {
         return 1
     fi
 
-    local ok=0
-    case "$source" in
-        brew)
-            _run_quiet brew upgrade "$tool" && ok=1
-            ;;
-        cargo)
-            _run_quiet cargo install "$tool" && ok=1
-            ;;
-        nix)
-            _run_quiet nix-env -iA "nixpkgs.$tool" && ok=1
-            ;;
-        apt)
-            _run_quiet apt-get install --only-upgrade -y "$tool" && ok=1
-            ;;
-        pacman)
-            _run_quiet pacman -S --noconfirm "$tool" && ok=1
-            ;;
-        apk)
-            _run_quiet apk upgrade "$tool" && ok=1
-            ;;
-        dnf)
-            _run_quiet dnf upgrade -y "$tool" && ok=1
-            ;;
-        uv)
-            _run_quiet uv tool upgrade "$tool" && ok=1
-            ;;
-        npm)
-            _run_quiet npm update -g "$tool" && ok=1
-            ;;
-        go:*)
-            _run_quiet go install "${source#go:}@latest" && ok=1
-            ;;
-        gh:*)
-            command -v huber &>/dev/null || {
-                printf "[${C_CROSS}] %-25s ${C_DIM}huber required${C_RESET}\n" "$tool"
-                return 1
-            }
-            _run_quiet huber update "${source#gh:}" && ok=1
-            ;;
-        appimage:*)
-            # Re-install AppImage from GitHub releases
-            local repo="${source#appimage:}"
-            # Remove old version first
-            rm -f "$HOME/.local/bin/$tool"
-            rm -f "$HOME/.local/share/sat/bin/appimages/$tool"
-            # Re-download latest
-            if install_github_appimage "$repo"; then
-                ok=1
-            fi
-            ;;
-        sat|repo:*)
+    local src_type="${source%%:*}"  # Extract source type (before colon)
+    local metadata="${source#*:}"   # Extract metadata (after colon)
+
+    # If source has no colon, metadata is empty
+    [[ "$metadata" == "$source" ]] && metadata=""
+
+    # Check for non-updatable sources first
+    case "$src_type" in
+        sat|repo)
             printf "[${C_CROSS}] %-25s ${C_DIM}cannot update source '%s'${C_RESET}\n" "$tool" "$source"
             return 1
+            ;;
+    esac
+
+    # Route to appropriate update function with spinner
+    local result
+    case "$src_type" in
+        brew)
+            run_with_spinner "$tool" "$src_type" update_brew "$tool"
+            result=$?
+            ;;
+        cargo)
+            run_with_spinner "$tool" "$src_type" update_cargo "$tool"
+            result=$?
+            ;;
+        nix)
+            run_with_spinner "$tool" "$src_type" update_nix "$tool"
+            result=$?
+            ;;
+        apt|pacman|apk|dnf)
+            run_with_spinner "$tool" "$src_type" update_system "$tool"
+            result=$?
+            ;;
+        uv)
+            run_with_spinner "$tool" "$src_type" update_uv "$tool"
+            result=$?
+            ;;
+        npm)
+            run_with_spinner "$tool" "$src_type" update_npm "$tool"
+            result=$?
+            ;;
+        go)
+            run_with_spinner "$tool" "$src_type" update_go "$tool" "$metadata"
+            result=$?
+            ;;
+        gh)
+            run_with_spinner "$tool" "$src_type" update_github "$tool" "$metadata"
+            result=$?
+            ;;
+        flatpak)
+            run_with_spinner "$tool" "$src_type" update_flatpak "$tool" "$metadata"
+            result=$?
+            ;;
+        appimage)
+            run_with_spinner "$tool" "$src_type" update_appimage "$tool" "$metadata"
+            result=$?
             ;;
         *)
             printf "[${C_CROSS}] %-25s ${C_DIM}unknown source '%s'${C_RESET}\n" "$tool" "$source"
@@ -74,7 +87,7 @@ _update_tool() {
             ;;
     esac
 
-    if [[ $ok -eq 1 ]]; then
+    if [[ $result -eq 0 ]]; then
         status_ok "$tool" "$source"
     else
         status_fail "$tool" "$source"

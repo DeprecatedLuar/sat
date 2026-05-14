@@ -8,6 +8,13 @@ search_cargo() {
         jq -r '.crates[]? | "\(.name) \(.max_version) - \(.description // "" | split("\n")[0])"' 2>/dev/null
 }
 
+# Query latest version from crates.io (before install)
+query_latest_version_cargo() {
+    local crate="$1"
+    curl -sS "https://crates.io/api/v1/crates/$crate" 2>/dev/null | \
+        jq -r '.crate.newest_version // empty'
+}
+
 # Install tool via cargo
 # Handles missing build dependencies by trying brew then system package manager
 install_cargo() {
@@ -50,10 +57,39 @@ install_cargo() {
     return 1
 }
 
+# Get installed version of cargo package
+get_version_from_cargo() {
+    local tool="$1"
+    command -v cargo &>/dev/null || return 1
+    cargo install --list 2>/dev/null | grep -oP "^${tool} v\K[^ :]+"
+}
+
 # Uninstall cargo package
 # Binary name may differ from crate name - look it up first
 uninstall_cargo() {
     local pkg="$1"
     local crate=$(cargo install --list 2>/dev/null | grep -B1 "^    $pkg\$" | head -1 | cut -d' ' -f1)
     cargo uninstall "${crate:-$pkg}"
+}
+
+# Update cargo package (cargo install re-installs/updates)
+update_cargo() {
+    local tool="$1"
+    _run_quiet cargo install "$tool"
+}
+
+# Check if cargo package is outdated
+check_outdated_cargo() {
+    local tool="$1"
+    command -v cargo &>/dev/null || return 1
+
+    # Try manifest first, fall back to querying cargo
+    local current=$(get_source_version "$(manifest_get "$tool")")
+    [[ -z "$current" ]] && current=$(cargo install --list 2>/dev/null | grep -oP "^${tool} v\K[^ :]+")
+    [[ -z "$current" ]] && return 1
+
+    local latest=$(curl -sS "https://crates.io/api/v1/crates/$tool" 2>/dev/null | \
+        jq -r '.crate.newest_version // empty')
+    [[ -z "$latest" || "$current" == "$latest" ]] && return 1
+    echo "$current $latest"
 }
