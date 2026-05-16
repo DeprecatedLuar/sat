@@ -40,7 +40,7 @@ get_version_from_nix() {
 # Uninstall Nix package
 uninstall_nix() {
     local pkg="$1"
-    nix-env --uninstall "$pkg" 2>/dev/null || nix profile remove "$pkg"
+    _run_quiet nix-env --uninstall "$pkg" || _run_quiet nix profile remove "$pkg"
 }
 
 # Update Nix package

@@ -55,8 +55,17 @@ sat_uninstall() {
             fi
         fi
 
-        printf "Removing %s\n" "$BINARY"
-        if pkg_remove "$BINARY" "$SOURCE"; then
+        local _result
+        if [[ -n "$SAT_DEBUG" ]]; then
+            printf "Removing %s\n" "$BINARY"
+            pkg_remove "$BINARY" "$SOURCE"; _result=$?
+        else
+            pkg_remove "$BINARY" "$SOURCE" >/dev/null 2>&1 &
+            spin_with_style "$BINARY" $! "$(get_source_type "$SOURCE")"
+            wait $!; _result=$?
+        fi
+
+        if [[ $_result -eq 0 ]]; then
             [[ "$TRACKED" == true ]] && _sat_manifest_remove "$BINARY"
             status_ok "$BINARY removed" "$SOURCE"
         else

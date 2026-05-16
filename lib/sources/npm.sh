@@ -73,7 +73,7 @@ uninstall_npm() {
     local pkg="$1"
 
     # Try as package name first
-    if npm uninstall -g "$pkg" 2>/dev/null; then
+    if _run_quiet npm uninstall -g "$pkg"; then
         return 0
     fi
 
@@ -81,7 +81,7 @@ uninstall_npm() {
     local bin_path=$(command -v "$pkg" 2>/dev/null)
     if [[ -L "$bin_path" ]]; then
         local pkg_name=$(readlink "$bin_path" | grep -oP 'node_modules/\K[^/]+(/[^/]+)?(?=/)')
-        [[ -n "$pkg_name" ]] && npm uninstall -g "$pkg_name"
+        [[ -n "$pkg_name" ]] && _run_quiet npm uninstall -g "$pkg_name"
     fi
 }
 

@@ -136,18 +136,18 @@ uninstall_flatpak() {
 
     local app_id=""
 
-    # If source has metadata (flatpak:org.app.Name), use that
+    # If source has metadata (flatpak:org.app.Name:version), extract app ID
     if [[ "$source" == flatpak:* ]]; then
-        app_id="${source#flatpak:}"
-        flatpak uninstall -y "$app_id" || return 1
+        app_id=$(get_source_identity "$source")
+        _run_quiet flatpak uninstall -y "$app_id" || return 1
     else
         # Try to find full app ID from installed apps
         app_id=$(flatpak list --app --columns=application 2>/dev/null | grep -i "$pkg" | head -1)
         if [[ -n "$app_id" ]]; then
-            flatpak uninstall -y "$app_id" || return 1
+            _run_quiet flatpak uninstall -y "$app_id" || return 1
         else
             # Fallback: try package name directly
-            flatpak uninstall -y "$pkg" || return 1
+            _run_quiet flatpak uninstall -y "$pkg" || return 1
         fi
     fi
 

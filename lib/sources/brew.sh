@@ -91,7 +91,7 @@ get_version_from_brew() {
 # Uninstall Homebrew package
 uninstall_brew() {
     local pkg="$1"
-    brew uninstall "$pkg"
+    _run_quiet brew uninstall "$pkg"
 }
 
 # Update Homebrew package

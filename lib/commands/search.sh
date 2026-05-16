@@ -209,8 +209,21 @@ filter_relevant() {
     awk -v query="$q" '
     BEGIN { IGNORECASE=1 }
     {
+        # Check if query appears in name with delimiters OR anywhere in description
         name = $1
         pattern = "(^|[-_@/.])" query "($|[-_@/.])"
+
+        # Also check if query appears in the description (after the first " - ")
+        desc_start = index($0, " - ")
+        if (desc_start > 0) {
+            desc = substr($0, desc_start + 3)
+            if (tolower(desc) ~ tolower(query)) {
+                print
+                next
+            }
+        }
+
+        # Check name with delimiter pattern
         if (name ~ pattern) print
     }'
 }

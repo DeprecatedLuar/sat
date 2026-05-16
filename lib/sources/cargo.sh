@@ -69,7 +69,7 @@ get_version_from_cargo() {
 uninstall_cargo() {
     local pkg="$1"
     local crate=$(cargo install --list 2>/dev/null | grep -B1 "^    $pkg\$" | head -1 | cut -d' ' -f1)
-    cargo uninstall "${crate:-$pkg}"
+    _run_quiet cargo uninstall "${crate:-$pkg}"
 }
 
 # Update cargo package (cargo install re-installs/updates)

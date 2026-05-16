@@ -427,11 +427,11 @@ pkg_remove() {
         gh|repo)    uninstall_github "$pkg" "$source" ;;
 
         # System package managers (inline - no separate module needed)
-        apt)        sudo apt remove --purge -y "$pkg" && sudo apt autoremove -y ;;
-        apk)        sudo apk del "$pkg" ;;
-        pacman)     sudo pacman -Rs --noconfirm "$pkg" ;;
-        dnf)        sudo dnf remove -y "$pkg" ;;
-        pkg)        pkg uninstall -y "$pkg" ;;
+        apt)        _run_quiet sudo apt remove --purge -y "$pkg" && _run_quiet sudo apt autoremove -y ;;
+        apk)        _run_quiet sudo apk del "$pkg" ;;
+        pacman)     _run_quiet sudo pacman -Rs --noconfirm "$pkg" ;;
+        dnf)        _run_quiet sudo dnf remove -y "$pkg" ;;
+        pkg)        _run_quiet pkg uninstall -y "$pkg" ;;
         system)
             # Generic system - use cached package manager
             local mgr="$SAT_PKG_MANAGER"

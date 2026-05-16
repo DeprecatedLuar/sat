@@ -326,7 +326,7 @@ uninstall_github() {
     if [[ "$source" == gh:*/* ]]; then
         local repo="${source#gh:}"
         if command -v huber &>/dev/null; then
-            huber uninstall "$repo" 2>/dev/null && return 0
+            _run_quiet huber uninstall "$repo" && return 0
         fi
     fi
 

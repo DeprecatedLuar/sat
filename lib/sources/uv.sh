@@ -53,7 +53,7 @@ uninstall_uv() {
     local pkg="$1"
     # uv tool list format: "package-name vX.X.X\n- binary1\n- binary2"
     local uv_pkg=$(uv tool list 2>/dev/null | grep -B1 "^- $pkg\$" | head -1 | cut -d' ' -f1)
-    uv tool uninstall "${uv_pkg:-$pkg}"
+    _run_quiet uv tool uninstall "${uv_pkg:-$pkg}"
 }
 
 # Update uv tool
