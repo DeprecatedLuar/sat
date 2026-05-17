@@ -52,10 +52,8 @@ sat_list() {
     # Display a tool entry with proper formatting
     _display_tool() {
         local prog="$1" source="$2"
-        local display=$(source_display "$source")
-        local color=$(source_color "$display")
         local light=$(source_light "$source")
-        printf "  ${light}%-20s${C_RESET} [${color}%s${C_RESET}]\n" "$prog" "$display"
+        display_tool_entry "$prog" "$source" "$light"
     }
 
     # Show current session tools (if inside a shell)
@@ -65,9 +63,7 @@ sat_list() {
             [[ "$key" != "TOOL" ]] && continue
             src=$(grep "^SOURCE_$value=" "$SAT_SESSION_MANIFEST" | cut -d= -f2)
             _matches_filter "$src" || continue
-            display=$(source_display "$src")
-            color=$(source_color "$display")
-            session_output+=$(printf "  ${C_DIM}%-20s${C_RESET} [${color}%s${C_RESET}]\n" "$value" "$display")
+            session_output+=$(display_tool_entry "$value" "$src" "${C_DIM}")
         done < "$SAT_SESSION_MANIFEST"
 
         if [[ -n "$session_output" ]]; then
@@ -93,9 +89,7 @@ sat_list() {
             echo "Active shell sessions:"
             for entry in "${active_tools[@]}"; do
                 IFS=: read -r tool src pid <<< "$entry"
-                display=$(source_display "$src")
-                color=$(source_color "$display")
-                printf "  ${C_DIM}%-20s${C_RESET} [${color}%s${C_RESET}] ${C_DIM}(pid $pid)${C_RESET}\n" "$tool" "$display"
+                display_tool_entry "$tool" "$src" "${C_DIM}" " ${C_DIM}(pid $pid)${C_RESET}"
             done
             echo ""
             has_content=true
@@ -104,20 +98,23 @@ sat_list() {
 
     # Show system manifest (permanent installs) grouped by source
     if [[ -s "$SAT_MANIFEST" ]]; then
-        # Collect entries by normalized source
-        declare -A by_source
         declare -a stale=()
+        declare -a entries=()
+
+        # Collect all entries with normalized source for grouping
         while IFS='=' read -r prog source; do
             [[ -z "$prog" ]] && continue
             if ! command -v "$prog" &>/dev/null; then
                 stale+=("$prog")
                 continue
             fi
-            # Skip if doesn't match filter
             _matches_filter "$source" || continue
+
             # Normalize source for grouping
             local group="$source"
             case "$source" in
+                npm:*) group="node" ;;
+                nixos:*) group="nixos" ;;
                 repo:*) group="repo" ;;
                 gh:*) group="gh" ;;
                 go:*) group="go" ;;
@@ -126,32 +123,32 @@ sat_list() {
                 flatpak:*) group="flatpak" ;;
                 apt|apk|pacman|dnf|pkg) group="system" ;;
             esac
-            by_source[$group]+="$prog=$source"$'\n'
+            entries+=("$group|$prog|$source")
         done < "$SAT_MANIFEST"
 
-        # Count packages per source
-        declare -A source_counts
-        for src in "${!by_source[@]}"; do
-            source_counts[$src]=$(echo "${by_source[$src]}" | grep -c "=")
-        done
-
-        # Sort sources by count (descending), but always put unknown last
-        local sorted_sources=($(for src in "${!source_counts[@]}"; do
-            if [[ "$src" == "unknown" ]]; then
-                echo "0 $src"  # Force unknown to sort last
-            else
-                echo "${source_counts[$src]} $src"
-            fi
-        done | sort -rn | awk '{print $2}'))
-
-        # Display in order of package count
-        if [[ ${#by_source[@]} -gt 0 ]]; then
-            for src in "${sorted_sources[@]}"; do
-                while IFS='=' read -r prog source; do
-                    [[ -z "$prog" ]] && continue
-                    _display_tool "$prog" "$source"
-                done <<< "${by_source[$src]}"
+        if [[ ${#entries[@]} -gt 0 ]]; then
+            # Count packages per source
+            declare -A counts
+            for entry in "${entries[@]}"; do
+                local src="${entry%%|*}"
+                ((counts[$src]++))
             done
+
+            # Prefix each entry with padded count for sorting
+            declare -a sorted=()
+            for entry in "${entries[@]}"; do
+                local src="${entry%%|*}"
+                local count="${counts[$src]}"
+                # Force unknown to sort last
+                [[ "$src" == "unknown" ]] && count=0
+                printf -v padded "%06d" "$count"
+                sorted+=("$padded|$entry")
+            done
+
+            # Sort by count (descending) and display
+            while IFS='|' read -r _ group prog source; do
+                _display_tool "$prog" "$source"
+            done < <(printf '%s\n' "${sorted[@]}" | sort -rn)
             has_content=true
         fi
 

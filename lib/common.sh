@@ -36,16 +36,17 @@ C_MANUAL_L=$'\033[38;2;210;180;150m'  # Soft tan
 
 # Map source to color
 source_color() {
-    case "$1" in
+    local source_type=$(get_source_type "$1")
+    case "$source_type" in
         cargo|rust)                    printf '%s' "$C_RUST" ;;
         npm|node)                      printf '%s' "$C_NODE" ;;
         uv|pip|python)                 printf '%s' "$C_PYTHON" ;;
         apt|apk|pacman|dnf|pkg|system) printf '%s' "$C_SYSTEM" ;;
         flatpak|flathub)               printf '%s' "$C_FLATPAK" ;;
         github)                        printf '%s' "$C_REPO" ;;
-        appimage|appimage:*)           printf '%s' "$C_APPIMAGE" ;;
+        appimage)                      printf '%s' "$C_APPIMAGE" ;;
         sat)                           printf '%s' "$C_SAT" ;;
-        go|go:*)                       printf '%s' "$C_GO" ;;
+        go)                            printf '%s' "$C_GO" ;;
         brew)                          printf '%s' "$C_BREW" ;;
         nix)                           printf '%s' "$C_NIX" ;;
         nixos)                         printf '%s' "$C_NIX" ;;
@@ -214,46 +215,56 @@ status_fail() {
 
 # Map internal source to display name
 source_display() {
-    case "$1" in
+    local source_type=$(get_source_type "$1")
+    case "$source_type" in
         npm)          echo "node" ;;
         uv)           echo "python" ;;
         cargo)        echo "rust" ;;
-        go:*)         echo "go" ;;
         go)           echo "go" ;;
-        gh)           echo "github" ;;     # Plain GitHub source
-        repo:*/*)     echo "github" ;;     # Has owner/repo metadata
-        gh:*/*)       echo "github" ;;     # Has owner/repo metadata
-        repo)         echo "unknown" ;;    # Bare repo (no metadata)
-        unknown:*)    echo "unknown" ;;    # Unknown with path
-        unknown)      echo "unknown" ;;    # Bare unknown
-        appimage:*)   echo "appimage" ;;
+        gh)           echo "github" ;;
+        repo)         echo "github" ;;
+        unknown)      echo "unknown" ;;
         appimage)     echo "appimage" ;;
-        flatpak:*)    echo "flatpak" ;;
         flatpak)      echo "flatpak" ;;
-        *)            echo "$1" ;;
+        *)            echo "$source_type" ;;
     esac
 }
 
 # Get pastel color for source (item names)
 source_light() {
-    case "$1" in
+    local source_type=$(get_source_type "$1")
+    case "$source_type" in
         npm|node)                      printf '%s' "$C_NODE_L" ;;
         uv|pip|python)                 printf '%s' "$C_PYTHON_L" ;;
         cargo|rust)                    printf '%s' "$C_RUST_L" ;;
         apt|apk|pacman|dnf|pkg|system) printf '%s' "$C_SYSTEM_L" ;;
-        sat|github|gh)                 printf '%s' "$C_REPO_L" ;;
-        repo:*/*)                      printf '%s' "$C_REPO_L" ;;  # GitHub with metadata
-        gh:*/*)                        printf '%s' "$C_REPO_L" ;;  # GitHub with metadata
-        appimage|appimage:*)           printf '%s' "$C_APPIMAGE_L" ;;
-        flatpak|flatpak:*)             printf '%s' "$C_FLATPAK_L" ;;
-        go|go:*)                       printf '%s' "$C_GO_L" ;;
-        brew)                          printf '%s' "$C_NIX_L" ;;
-        nix)                           printf '%s' "$C_NIX_L" ;;
-        nixos)                         printf '%s' "$C_NIX_L" ;;
+        sat|github|gh|repo)            printf '%s' "$C_REPO_L" ;;
+        appimage)                      printf '%s' "$C_APPIMAGE_L" ;;
+        flatpak)                       printf '%s' "$C_FLATPAK_L" ;;
+        go)                            printf '%s' "$C_GO_L" ;;
+        brew)                          printf '%s' "$C_BREW_L" ;;
+        nix|nixos)                     printf '%s' "$C_NIX_L" ;;
         manual)                        printf '%s' "$C_MANUAL_L" ;;
-        repo|unknown:*|unknown)        printf '%s' "$C_DIM" ;;     # Unknown sources
+        unknown)                       printf '%s' "$C_DIM" ;;
         *)                             printf '%s' "$C_RESET" ;;
     esac
+}
+
+# Display a tool entry with source and optional version
+# Args: prog, source_string, [prefix], [suffix]
+display_tool_entry() {
+    local prog="$1" source="$2" prefix="${3:-}" suffix="${4:-}"
+    local display=$(source_display "$source")
+    local color=$(source_color "$display")
+    local version=$(get_source_version "$source")
+
+    if [[ -n "$version" ]]; then
+        printf "  %s%-20s [${color}%s${C_RESET}] ${C_DIM}v%s${C_RESET}%s\n" \
+            "$prefix" "$prog" "$display" "$version" "$suffix"
+    else
+        printf "  %s%-20s [${color}%s${C_RESET}]%s\n" \
+            "$prefix" "$prog" "$display" "$suffix"
+    fi
 }
 
 # Colored status with source tag

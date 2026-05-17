@@ -89,12 +89,13 @@ sat_scan() {
                 cargo)   version=$(get_version_from_cargo "$prog") ;;
                 brew)    version=$(get_version_from_brew "$prog") ;;
                 nix)     version=$(get_version_from_nix "$prog") ;;
+                nixos)   version=$(get_version_from_nixos "$prog") ;;
                 go)      version=$(get_version_from_go "$prog") ;;
                 uv)      version=$(get_version_from_uv "$prog") ;;
                 flatpak) version=$(get_version_from_flatpak "$identity") ;;
                 appimage) [[ -n "$identity" ]] && version=$(get_version_from_appimage "$identity") ;;
                 gh)      [[ -n "$identity" ]] && version=$(get_version_from_github "$identity") ;;
-                apt|pacman|apk|dnf|nixos) version=$(get_version_from_system "$prog") ;;
+                apt|pacman|apk|dnf) version=$(get_version_from_system "$prog") ;;
             esac
         fi
 
@@ -102,14 +103,9 @@ sat_scan() {
         local src_string=$(build_source_string "$source" "$identity" "$version")
         manifest_add "$prog" "$src_string"
 
-        # Display with version if available
-        local display=$(source_display "$source")
-        local color=$(source_color "$display")
-        if [[ -n "$version" ]]; then
-            printf "  ${color}+${C_RESET} %-20s [${color}%s${C_RESET}] ${C_DIM}v%s${C_RESET}\n" "$prog" "$display" "$version"
-        else
-            printf "  ${color}+${C_RESET} %-20s [${color}%s${C_RESET}]\n" "$prog" "$display"
-        fi
+        # Display with version
+        local color=$(source_color "$(source_display "$source")")
+        display_tool_entry "$prog" "$src_string" "${color}+${C_RESET} "
         return 0
     }
 

@@ -49,24 +49,40 @@ Shell delegates to `sat_install`, only handling:
 
 ```
 ~/.local/share/sat/
-├── manifest                    # System manifest: tool=source
+├── manifest                    # System manifest: tool=source:identity:version
 ├── bin/appimages/              # AppImage storage (symlinked to ~/.local/bin/)
 └── shell/
-    ├── manifest                # Master manifest: tool:source:pid
+    ├── manifest                # Master manifest: tool:source:identity:version:pid
     └── $PID/
-        ├── manifest            # Session manifest: TOOL=x, SOURCE_x=y
+        ├── manifest            # Session manifest: TOOL=x, SOURCE_x=source:identity:version
         └── snapshot-*          # Config snapshots
 
 /tmp/sat-$PID/                  # XDG override (ephemeral)
 ```
 
+### Source String Format
+
+All manifests use structured source strings: `source:identity:version`
+
+**Examples:**
+- `cargo::14.1.0` - Cargo package, no identity, version 14.1.0
+- `gh:owner/repo:v1.0.0` - GitHub repo, identity=owner/repo, version v1.0.0
+- `flatpak:com.app.id:1.2.3` - Flatpak app, identity=app ID, version 1.2.3
+- `nixos::` - NixOS package, no identity/version tracked
+
+**Parsing helpers** (in `lib/manifest.sh`):
+- `get_source_type(str)` - Extract source type (first field)
+- `get_source_identity(str)` - Extract identity (second field)
+- `get_source_version(str)` - Extract version (third field)
+- `build_source_string(source, identity, version)` - Construct from components
+
 ### Manifest Types
 
 | Manifest | Location | Format | Purpose |
 |----------|----------|--------|---------|
-| System | `sat/manifest` | `tool=source` | Permanent installs via `sat install` |
-| Master | `sat/shell/manifest` | `tool:source:pid` | All active session tools |
-| Session | `sat/shell/$PID/manifest` | `TOOL=x`, `SOURCE_x=y` | Per-session details |
+| System | `sat/manifest` | `tool=source:identity:version` | Permanent installs via `sat install` |
+| Master | `sat/shell/manifest` | `tool:source:identity:version:pid` | All active session tools |
+| Session | `sat/shell/$PID/manifest` | `TOOL=x`, `SOURCE_x=source:identity:version` | Per-session details |
 
 **Key Rules:**
 - A `tool:source` combo lives in ONE manifest only (system XOR master)
@@ -99,9 +115,15 @@ All manifest operations are centralized in `lib/manifest.sh`, providing a clean 
 - `pid_manifest_add(pid, tool, source)`, `pid_manifest_tools(pid)`, etc.
 
 **High-level API** (context-aware):
-- `track_install(tool, source)` - routes to appropriate manifest based on `SAT_MANIFEST_TARGET`
+- `track_install(tool, source, [identity], [version])` - routes to appropriate manifest based on `SAT_MANIFEST_TARGET`
 
-All functions auto-detect context (binary vs remote) and route appropriately.
+**Display helpers** (in `lib/common.sh`):
+- `source_display(source_str)` - Convert source type to display name (e.g., `npm` → `node`)
+- `source_color(source_str)` - Get ANSI color for source type
+- `source_light(source_str)` - Get pastel color for package names
+- `display_tool_entry(prog, source_str, [prefix], [suffix])` - Formatted output with version
+
+All functions auto-detect context (binary vs remote) and route appropriately. Display functions parse source strings via `get_source_type()` to extract just the source type.
 
 ## Internal Manifest Implementation
 
@@ -115,7 +137,7 @@ Binary (sat)
 ├── _pid_manifest_*()
 └── internal)              # CLI API entry point
 
-common.sh (wrappers)
+manifest.sh (wrappers)
 ├── manifest_*()           # Check for _* functions, else call API
 ├── master_*()
 └── pid_manifest_*()
@@ -123,6 +145,11 @@ common.sh (wrappers)
 lib/*.sh
 └── Call wrapper functions (works in binary context and remote)
 ```
+
+**Load order in binary:**
+1. `common.sh` - Colors, utilities, display functions
+2. `internal.sh` - Internal manifest functions (`_*`)
+3. `manifest.sh` - Wrappers + parsing helpers (loaded early for display functions)
 
 When binary runs: wrappers use `_*` functions directly (no subprocess)
 When lib runs in tmux: `_*` functions don't exist → fall back to `sat internal ...`
@@ -237,13 +264,25 @@ Automatic fallback chain (`install_github` with `method=auto`):
 
 ## Development
 
+**Installation:**
+```bash
+# One-line install
+curl -sSL https://raw.githubusercontent.com/DeprecatedLuar/sat/main/install.sh | bash
+
+# Manual install
+cp sat ~/.local/bin/sat
+chmod +x ~/.local/bin/sat
+```
+
+The binary (`sat`) is a bash script that auto-downloads its library on first run via `_ensure_lib()`.
+
 **Library development symlink:**
 ```bash
 rm -rf ~/.local/share/sat/lib
 ln -s ~/Workspace/dev/sat/lib ~/.local/share/sat/lib
 ```
 
-Changes to lib files are immediately active. Run `sat pull` to restore production library.
+Changes to lib files are immediately active (no rebuild needed). Binary changes require copying to `~/.local/bin/sat`. Run `sat pull` to restore production library.
 
 ## Dependencies
 

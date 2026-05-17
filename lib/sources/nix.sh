@@ -30,11 +30,29 @@ install_nix() {
     _run_quiet nix-env -iA "nixpkgs.$tool"
 }
 
-# Get installed version of Nix package
+# Get installed version of Nix package (user profile)
 get_version_from_nix() {
     local tool="$1"
     command -v nix-env &>/dev/null || return 1
     nix-env -q "$tool" 2>/dev/null | grep -oP "\d[\d.]+"
+}
+
+# Get installed version of NixOS system package
+get_version_from_nixos() {
+    local tool="$1"
+    local bin_path="/run/current-system/sw/bin/$tool"
+    [[ ! -e "$bin_path" ]] && return 1
+
+    # Follow symlink to nix store and extract version from path
+    # /nix/store/hash-android-tools-35.0.2/bin/adb → 35.0.2
+    # /nix/store/hash-firefox-120.0/bin/firefox → 120.0
+    local store_path=$(readlink -f "$bin_path" 2>/dev/null)
+    [[ -z "$store_path" ]] && return 1
+
+    # Extract derivation name, then get last segment that looks like version
+    # Match: hash-NAME-VERSION → extract VERSION (last dash-separated segment starting with digit)
+    local deriv=$(echo "$store_path" | grep -oP '/nix/store/[^/]+' | cut -d- -f2-)
+    echo "$deriv" | grep -oP '(^|-)(\d+\.[\d.]+\d+|[\d.]+)$' | sed 's/^-//'
 }
 
 # Uninstall Nix package
