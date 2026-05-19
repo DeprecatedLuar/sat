@@ -183,6 +183,26 @@ search_github_best_match() {
     local query="$1"
     local gh_data=$(search_github "$query" 10) || return 1
 
+    # Pass 1: Try exact repo name match first
+    local exact_match=$(echo "$gh_data" | jq -r '.data.search.nodes[]? | "\(.nameWithOwner)|\(.primaryLanguage.name // "")"' | \
+        awk -F'|' -v q="$query" '
+        BEGIN { IGNORECASE=1 }
+        {
+            full_name = $1
+            lang = $2
+
+            split(full_name, parts, "/")
+            name = parts[2]
+
+            if (tolower(name) == tolower(q)) {
+                print full_name "|" lang
+                exit
+            }
+        }')
+
+    [[ -n "$exact_match" ]] && echo "$exact_match" && return 0
+
+    # Pass 2: Fall back to pattern match
     echo "$gh_data" | jq -r '.data.search.nodes[]? | "\(.nameWithOwner)|\(.primaryLanguage.name // "")"' | \
         awk -F'|' -v q="$query" '
         BEGIN { IGNORECASE=1 }
