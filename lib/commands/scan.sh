@@ -12,6 +12,9 @@ source "$SAT_LIB/sources/system.sh"
 source "$SAT_LIB/sources/github.sh"
 source "$SAT_LIB/sources/appimage.sh"
 
+# Scan modules
+source "$SAT_LIB/scan/system.sh"
+
 sat_scan() {
     echo "Scanning ecosystems..."
 
@@ -26,23 +29,38 @@ sat_scan() {
         case "$src" in
             cargo) [[ "$prog" == cargo-* || "$prog" == clippy-driver || "$prog" == rust[!u]* || "$prog" == rls ]] && return 0 ;;
             nix)   [[ "$prog" == nix || "$prog" == nix-* ]] && return 0 ;;
-            nixos)
-                # NixOS/Nix system tools
+            nixos|pacman|apt|dnf|apk)
+                # System package manager exclusions (infrastructure, not user apps)
+
+                # Package manager tools themselves
                 case "$prog" in
-                    nix|nix-*|nixos-*) return 0 ;;
+                    nix|nix-*|nixos-*) return 0 ;;  # NixOS
+                    pacman|makepkg|pacman-*) return 0 ;;  # Arch
+                    apt|apt-*|dpkg|dpkg-*|aptitude) return 0 ;;  # Debian/Ubuntu
+                    dnf|yum|rpm|rpm-*) return 0 ;;  # Fedora/RHEL
+                    apk) return 0 ;;  # Alpine
                 esac
+
                 # Desktop environment infrastructure (services/daemons, not apps)
                 case "$prog" in
                     # XFCE services
                     xfce4-panel|xfce4-session|xfce4-power-manager|xfce4-settings|xfdesktop|xfwm4|xfce4-screensaver) return 0 ;;
                     # GNOME services
-                    gnome-keyring|gnome-settings-daemon|gnome-session) return 0 ;;
+                    gnome-keyring|gnome-settings-daemon|gnome-session|gvfs*) return 0 ;;
                     # KDE/Plasma services
-                    plasma-*|kwin*) return 0 ;;
+                    plasma-*|kwin*|kdeinit*) return 0 ;;
                 esac
-                # X11/system utilities
+
+                # X11/Wayland system utilities (not apps)
                 case "$prog" in
                     xinit|xinput|xlsclients|xprop|xrandr|xrdb|xset|xsetroot|xterm) return 0 ;;
+                    wayland-scanner|weston-*) return 0 ;;
+                esac
+
+                # System daemons and infrastructure
+                case "$prog" in
+                    systemd|systemctl|journalctl|udevadm|dbus-*|polkit*) return 0 ;;
+                    sudo|su|login|getty) return 0 ;;
                 esac
                 ;;
             *)
@@ -175,6 +193,10 @@ sat_scan() {
     _cleanup_manifest
     local pruned=$?
 
+    # Export helpers for scan modules
+    export -f is_excluded
+    export -f _try_add_tool
+
     local added=0
 
     # Scan directory-based sources (explicit mapping)
@@ -205,22 +227,8 @@ sat_scan() {
         done
     fi
 
-    # NixOS: scan system packages from configuration (only user-installed, not deps)
-    if command -v nixos-option &>/dev/null; then
-        local user_packages=$(nixos-option environment.systemPackages 2>/dev/null | \
-            grep -oP '<derivation \K[^>]+' | \
-            awk -F'-[0-9]' '{print $1}' | \
-            sort -u)
-
-        if [[ -n "$user_packages" && -d "/run/current-system/sw/bin" ]]; then
-            for bin in /run/current-system/sw/bin/*; do
-                [[ ! -x "$bin" ]] && continue
-                prog=$(basename "$bin")
-                # Only add if binary name matches a user-installed package
-                echo "$user_packages" | grep -qxF "$prog" && _try_add_tool "$prog" "nixos" && ((added++))
-            done
-        fi
-    fi
+    # System packages: scan explicitly-installed packages per distro
+    scan_system_packages
 
     # Flatpak: scan user-installed apps (not runtimes)
     if command -v flatpak &>/dev/null; then

@@ -111,6 +111,7 @@ _ensure_os_info() {
                     alpine) pkg_mgr="apk" ;;
                     arch)   pkg_mgr="pacman" ;;
                     rhel)   pkg_mgr="dnf" ;;
+                    nixos)  pkg_mgr="nixos" ;;
                 esac
                 ;;
         esac
