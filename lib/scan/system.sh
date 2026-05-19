@@ -18,24 +18,17 @@ scan_system_packages() {
 
 # Pacman (Arch/CachyOS): scan explicitly-installed packages
 _scan_pacman() {
-    local explicit_packages=$(pacman -Qe 2>/dev/null | awk '{print $1}')
-    [[ -z "$explicit_packages" ]] && return 0
+    command -v pacman &>/dev/null || return 0
 
-    for bin_dir in /usr/bin /usr/local/bin; do
-        [[ ! -d "$bin_dir" ]] && continue
-        for bin in "$bin_dir"/*; do
-            [[ ! -x "$bin" ]] && continue
+    # Optimized: query all explicit packages at once, then filter for /usr/bin binaries
+    # Much faster than calling pacman -Qo for every file in /usr/bin
+    pacman -Qeq 2>/dev/null | xargs pacman -Ql 2>/dev/null | \
+        awk '/\/usr\/(local\/)?bin\/[^\/]+$/ {print $2}' | \
+        while read -r bin; do
+            [[ -x "$bin" ]] || continue
             local prog=$(basename "$bin")
-
-            # Find which package owns this binary
-            local package=$(pacman -Qo "$bin" 2>/dev/null | awk '{print $5}')
-            [[ -z "$package" ]] && continue
-
-            # Only add if package is explicitly installed
-            echo "$explicit_packages" | grep -qxF "$package" && \
-                _try_add_tool "$prog" "pacman" && ((added++))
+            _try_add_tool "$prog" "pacman" && ((added++))
         done
-    done
 }
 
 # Apt (Debian/Ubuntu): scan manually-installed packages
