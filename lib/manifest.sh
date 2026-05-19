@@ -54,32 +54,143 @@ get_source_version() {
 }
 
 # =============================================================================
-# LOW-LEVEL MANIFEST API (Wrappers)
+# MANIFEST FUNCTIONS
 # =============================================================================
-# Auto-detect context: use internal _* functions (binary) or subprocess (remote)
 
-# sat-manifest (system manifest: tool=source:identity:version)
-manifest_add()    { declare -F _sat_manifest_add    &>/dev/null && _sat_manifest_add "$@"    || sat internal sat-manifest add "$1" "$2"; }
-manifest_get()    { declare -F _sat_manifest_get    &>/dev/null && _sat_manifest_get "$@"    || sat internal sat-manifest get "$1"; }
-manifest_remove() { declare -F _sat_manifest_remove &>/dev/null && _sat_manifest_remove "$@" || sat internal sat-manifest remove "$1"; }
-manifest_has()    { declare -F _sat_manifest_has    &>/dev/null && _sat_manifest_has "$@"    || sat internal sat-manifest has "$1"; }
+# Ensure manifest file exists and is writable
+_ensure_manifest() {
+    local manifest="$1"
+    local dir=$(dirname "$manifest")
 
-# shell-manifest (master manifest: tool:source:pid)
-master_add()         { declare -F _shell_manifest_add        &>/dev/null && _shell_manifest_add "$@"        || sat internal shell-manifest add "$1" "$2" "$3"; }
-master_get_pids()    { declare -F _shell_manifest_pids       &>/dev/null && _shell_manifest_pids "$@"       || sat internal shell-manifest pids "$1" "$2"; }
-master_has_tool()    { declare -F _shell_manifest_has        &>/dev/null && _shell_manifest_has "$@"        || sat internal shell-manifest has "$1"; }
-master_remove()      { declare -F _shell_manifest_remove     &>/dev/null && _shell_manifest_remove "$@"     || sat internal shell-manifest remove "$1" "$2" "$3"; }
-master_remove_tool() { declare -F _shell_manifest_remove_all &>/dev/null && _shell_manifest_remove_all "$@" || sat internal shell-manifest remove-all "$1"; }
-master_promote()     { declare -F _shell_manifest_promote    &>/dev/null && _shell_manifest_promote "$@"    || sat internal shell-manifest promote "$1" "$2"; }
+    if [[ ! -d "$dir" ]]; then
+        if ! mkdir -p "$dir" 2>/dev/null; then
+            echo "Error: Cannot create directory: $dir" >&2
+            echo "Check permissions and disk space." >&2
+            return 1
+        fi
+    fi
 
-# pid-manifest (session manifest: TOOL=x, SOURCE_x=y)
-pid_manifest_add()    { declare -F _pid_manifest_add    &>/dev/null && _pid_manifest_add "$@"    || sat internal pid-manifest add "$1" "$2" "$3"; }
-pid_manifest_tools()  { declare -F _pid_manifest_tools  &>/dev/null && _pid_manifest_tools "$@"  || sat internal pid-manifest tools "$1"; }
-pid_manifest_source() { declare -F _pid_manifest_source &>/dev/null && _pid_manifest_source "$@" || sat internal pid-manifest source "$1" "$2"; }
-pid_manifest_remove() { declare -F _pid_manifest_remove &>/dev/null && _pid_manifest_remove "$@" || sat internal pid-manifest remove "$1"; }
+    if [[ ! -f "$manifest" ]]; then
+        if ! touch "$manifest" 2>/dev/null; then
+            echo "Error: Cannot create manifest: $manifest" >&2
+            echo "Check permissions and disk space." >&2
+            return 1
+        fi
+    fi
+
+    if [[ ! -w "$manifest" ]]; then
+        echo "Error: Manifest not writable: $manifest" >&2
+        echo "Check file permissions." >&2
+        return 1
+    fi
+
+    return 0
+}
+
+# System manifest (tool=source:identity:version)
+manifest_add() {
+    _ensure_manifest "$SAT_MANIFEST" || return 1
+    sed -i "/^$1=/d" "$SAT_MANIFEST" 2>/dev/null
+    if ! echo "$1=$2" >> "$SAT_MANIFEST"; then
+        echo "Error: Failed to add $1 to manifest" >&2
+        return 1
+    fi
+}
+
+manifest_get() {
+    [[ -f "$SAT_MANIFEST" ]] || return 0
+    grep "^$1=" "$SAT_MANIFEST" 2>/dev/null | cut -d= -f2
+}
+
+manifest_remove() {
+    [[ -f "$SAT_MANIFEST" ]] || return 0
+    if ! sed -i "/^$1=/d" "$SAT_MANIFEST" 2>/dev/null; then
+        echo "Error: Failed to remove $1 from manifest" >&2
+        return 1
+    fi
+}
+
+manifest_has() {
+    [[ -f "$SAT_MANIFEST" ]] || return 1
+    grep -q "^$1=" "$SAT_MANIFEST" 2>/dev/null
+}
+
+# Master manifest (tool:source:identity:version:pid)
+master_add() {
+    _ensure_manifest "$SAT_SHELL_MASTER" || return 1
+    if ! echo "$1:$2:$3" >> "$SAT_SHELL_MASTER"; then
+        echo "Error: Failed to add $1 to shell manifest" >&2
+        return 1
+    fi
+}
+
+master_get_pids() {
+    [[ -f "$SAT_SHELL_MASTER" ]] || return 0
+    grep "^$1:$2:" "$SAT_SHELL_MASTER" 2>/dev/null | cut -d: -f3
+}
+
+master_has_tool() {
+    [[ -f "$SAT_SHELL_MASTER" ]] || return 1
+    grep -q "^$1:" "$SAT_SHELL_MASTER" 2>/dev/null
+}
+
+master_remove() {
+    [[ -f "$SAT_SHELL_MASTER" ]] || return 0
+    if ! sed -i "\|^$1:$2:$3\$|d" "$SAT_SHELL_MASTER" 2>/dev/null; then
+        echo "Error: Failed to remove $1 from shell manifest" >&2
+        return 1
+    fi
+}
+
+master_remove_tool() {
+    [[ -f "$SAT_SHELL_MASTER" ]] || return 0
+    if ! sed -i "\|^$1:|d" "$SAT_SHELL_MASTER" 2>/dev/null; then
+        echo "Error: Failed to remove all $1 entries from shell manifest" >&2
+        return 1
+    fi
+}
+
+master_promote() {
+    local tool="$1" src="$2"
+    [[ -f "$SAT_SHELL_MASTER" ]] && sed -i "\|^${tool}:${src}:|d" "$SAT_SHELL_MASTER" 2>/dev/null
+    manifest_has "$tool" || manifest_add "$tool" "$src"
+}
+
+# Session manifest (TOOL=x, SOURCE_x=source:identity:version)
+pid_manifest_add() {
+    local pid="$1" tool="$2" src="$3"
+    local manifest_path="$SAT_SHELL_DIR/$pid/manifest"
+
+    if ! mkdir -p "$SAT_SHELL_DIR/$pid" 2>/dev/null; then
+        echo "Error: Cannot create session directory: $SAT_SHELL_DIR/$pid" >&2
+        return 1
+    fi
+
+    if ! echo "TOOL=$tool" >> "$manifest_path" || ! echo "SOURCE_$tool=$src" >> "$manifest_path"; then
+        echo "Error: Failed to write to session manifest: $manifest_path" >&2
+        return 1
+    fi
+}
+
+pid_manifest_tools() {
+    [[ -f "$SAT_SHELL_DIR/$1/manifest" ]] || return 0
+    grep "^TOOL=" "$SAT_SHELL_DIR/$1/manifest" 2>/dev/null | cut -d= -f2
+}
+
+pid_manifest_source() {
+    [[ -f "$SAT_SHELL_DIR/$1/manifest" ]] || return 0
+    grep "^SOURCE_$2=" "$SAT_SHELL_DIR/$1/manifest" 2>/dev/null | cut -d= -f2
+}
+
+pid_manifest_remove() {
+    if ! rm -rf "$SAT_SHELL_DIR/$1" "/tmp/sat-$1" 2>/dev/null; then
+        echo "Error: Failed to remove session data for PID $1" >&2
+        return 1
+    fi
+}
 
 # =============================================================================
-# HIGH-LEVEL MANIFEST API
+# HIGH-LEVEL API
 # =============================================================================
 
 # Track installation in appropriate manifest based on context

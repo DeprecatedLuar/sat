@@ -4,14 +4,26 @@
 # Search relies on GitHub search (no separate AppImage registry)
 # Use search_github() from github.sh
 
-# Shared GitHub API wrapper (avoid duplication)
+# Shared GitHub API wrapper with error handling
 _appimage_gh_api() {
     local endpoint="$1"
+    local response
+
     if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
-        gh api "$endpoint" 2>/dev/null
+        response=$(gh api "$endpoint" 2>&1)
+        [[ $? -ne 0 ]] && return 1
     else
-        curl -sS "https://api.github.com/$endpoint"
+        response=$(curl -sS --fail "https://api.github.com/$endpoint" 2>&1)
+        [[ $? -ne 0 ]] && return 1
     fi
+
+    # Validate JSON
+    if ! echo "$response" | jq empty 2>/dev/null; then
+        [[ -n "$SAT_DEBUG" ]] && echo "[debug] invalid JSON from GitHub API" >&2
+        return 1
+    fi
+
+    echo "$response"
 }
 
 # Install AppImage from GitHub releases
@@ -132,12 +144,7 @@ get_version_from_appimage() {
 
     # Query GitHub for latest release tag
     local release_info
-    if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
-        release_info=$(gh api "repos/$repo/releases/latest" 2>/dev/null)
-    else
-        release_info=$(curl -sS "https://api.github.com/repos/$repo/releases/latest" 2>/dev/null)
-    fi
-
+    release_info=$(_appimage_gh_api "repos/$repo/releases/latest") || return 0
     echo "$release_info" | jq -r '.tag_name // empty'
 }
 
@@ -160,12 +167,7 @@ check_outdated_appimage() {
 
     # Get latest release info from GitHub
     local release_info
-    if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
-        release_info=$(gh api "repos/$repo/releases/latest" 2>/dev/null)
-    else
-        release_info=$(curl -sS "https://api.github.com/repos/$repo/releases/latest" 2>/dev/null)
-    fi
-    [[ -z "$release_info" ]] && return 1
+    release_info=$(_appimage_gh_api "repos/$repo/releases/latest") || return 1
 
     local latest_tag=$(echo "$release_info" | jq -r '.tag_name // empty')
     [[ -z "$latest_tag" ]] && return 1

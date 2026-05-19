@@ -4,15 +4,19 @@
 # Search npm registry
 search_npm() {
     local query="$1"
-    curl -sS "https://registry.npmjs.org/-/v1/search?text=$query&size=10" 2>/dev/null | \
-        jq -r '.objects[]? | "\(.package.name) \(.package.version) - \(.package.description // "" | split("\n")[0])"' 2>/dev/null
+    local response
+
+    response=$(_fetch_json "https://registry.npmjs.org/-/v1/search?text=$query&size=10" "npm search") || return 0
+    echo "$response" | jq -r '.objects[]? | "\(.package.name) \(.package.version) - \(.package.description // "" | split("\n")[0])"' 2>/dev/null
 }
 
 # Query latest version from npm registry (before install)
 query_latest_version_npm() {
     local pkg="$1"
-    curl -sS "https://registry.npmjs.org/$pkg/latest" 2>/dev/null | \
-        jq -r '.version // empty'
+    local response
+
+    response=$(_fetch_json "https://registry.npmjs.org/$pkg/latest" "npm/$pkg") || return 1
+    echo "$response" | jq -r '.version // empty'
 }
 
 # Install from npm
@@ -128,8 +132,9 @@ check_outdated_npm() {
     [[ -z "$current" ]] && return 1
 
     # Get latest from npm registry
-    local latest=$(curl -sS "https://registry.npmjs.org/$pkg_name/latest" 2>/dev/null | \
-        jq -r '.version // empty')
+    local response latest
+    response=$(_fetch_json "https://registry.npmjs.org/$pkg_name/latest" "npm/$pkg_name") || return 1
+    latest=$(echo "$response" | jq -r '.version // empty')
     [[ -z "$latest" || "$current" == "$latest" ]] && return 1
     echo "$current $latest"
 }

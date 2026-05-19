@@ -4,17 +4,21 @@
 # Search PyPI
 search_uv() {
     local query="$1"
-    local info=$(curl -sS "https://pypi.org/pypi/$query/json" 2>/dev/null)
-    if echo "$info" | jq -e '.info' &>/dev/null; then
-        echo "$info" | jq -r '"\(.info.name) \(.info.version) - \(.info.summary // "" | split("\n")[0])"' 2>/dev/null
+    local response
+
+    response=$(_fetch_json "https://pypi.org/pypi/$query/json" "PyPI search") || return 0
+    if echo "$response" | jq -e '.info' &>/dev/null; then
+        echo "$response" | jq -r '"\(.info.name) \(.info.version) - \(.info.summary // "" | split("\n")[0])"' 2>/dev/null
     fi
 }
 
 # Query latest version from PyPI (before install)
 query_latest_version_uv() {
     local pkg="$1"
-    curl -sS "https://pypi.org/pypi/$pkg/json" 2>/dev/null | \
-        jq -r '.info.version // empty'
+    local response
+
+    response=$(_fetch_json "https://pypi.org/pypi/$pkg/json" "PyPI/$pkg") || return 1
+    echo "$response" | jq -r '.info.version // empty'
 }
 
 # Install from PyPI via uv
@@ -72,8 +76,9 @@ check_outdated_uv() {
     [[ -z "$current" ]] && current=$(uv tool list 2>/dev/null | grep -oP "^${tool} \K\S+")
     [[ -z "$current" ]] && return 1
 
-    local latest=$(curl -sS "https://pypi.org/pypi/$tool/json" 2>/dev/null | \
-        jq -r '.info.version // empty')
+    local response latest
+    response=$(_fetch_json "https://pypi.org/pypi/$tool/json" "PyPI/$tool") || return 1
+    latest=$(echo "$response" | jq -r '.info.version // empty')
     [[ -z "$latest" || "$current" == "$latest" ]] && return 1
     echo "$current $latest"
 }

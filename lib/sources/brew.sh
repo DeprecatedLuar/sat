@@ -4,18 +4,19 @@
 # Search Homebrew
 search_brew() {
     local query="$1"
+    local response
 
     # Try formula first
-    local info=$(curl -sS "https://formulae.brew.sh/api/formula/$query.json" 2>/dev/null)
-    if echo "$info" | jq -e '.name' &>/dev/null; then
-        echo "$info" | jq -r '"\(.name) \(.versions.stable) - \(.desc // "" | split("\n")[0])"' 2>/dev/null
+    if response=$(_fetch_json "https://formulae.brew.sh/api/formula/$query.json" "brew formula") && \
+       echo "$response" | jq -e '.name' &>/dev/null; then
+        echo "$response" | jq -r '"\(.name) \(.versions.stable) - \(.desc // "" | split("\n")[0])"' 2>/dev/null
         return
     fi
 
     # Try cask if formula not found
-    info=$(curl -sS "https://formulae.brew.sh/api/cask/$query.json" 2>/dev/null)
-    if echo "$info" | jq -e '.token' &>/dev/null; then
-        echo "$info" | jq -r '
+    if response=$(_fetch_json "https://formulae.brew.sh/api/cask/$query.json" "brew cask") && \
+       echo "$response" | jq -e '.token' &>/dev/null; then
+        echo "$response" | jq -r '
             .token + " " + .version + " - " +
             (if (.depends_on | has("macos")) then "(macOS only) " else "" end) +
             (.desc // "" | split("\n")[0])
@@ -26,17 +27,19 @@ search_brew() {
 # Query latest version from Homebrew API (before install)
 query_latest_version_brew() {
     local pkg="$1"
+    local response
 
     # Try formula first
-    local info=$(curl -sS "https://formulae.brew.sh/api/formula/$pkg.json" 2>/dev/null)
-    if echo "$info" | jq -e '.versions.stable' &>/dev/null; then
-        echo "$info" | jq -r '.versions.stable'
+    if response=$(_fetch_json "https://formulae.brew.sh/api/formula/$pkg.json" "brew/$pkg") && \
+       echo "$response" | jq -e '.versions.stable' &>/dev/null; then
+        echo "$response" | jq -r '.versions.stable'
         return
     fi
 
     # Try cask
-    info=$(curl -sS "https://formulae.brew.sh/api/cask/$pkg.json" 2>/dev/null)
-    echo "$info" | jq -r '.version // empty'
+    if response=$(_fetch_json "https://formulae.brew.sh/api/cask/$pkg.json" "brew cask/$pkg"); then
+        echo "$response" | jq -r '.version // empty'
+    fi
 }
 
 # Install from Homebrew

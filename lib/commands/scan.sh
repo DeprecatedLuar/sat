@@ -142,7 +142,7 @@ sat_scan() {
             fi
 
             if $should_prune; then
-                _sat_manifest_remove "$prog"
+                manifest_remove "$prog"
                 printf "  ${C_DIM}- %-20s ($reason)${C_RESET}\n" "$prog"
                 ((pruned++))
             fi

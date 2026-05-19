@@ -157,7 +157,7 @@ sat_list() {
             echo ""
             echo "Cleaning ${#stale[@]} stale entries..."
             for prog in "${stale[@]}"; do
-                _sat_manifest_remove "$prog"
+                manifest_remove "$prog"
             done
         fi
     fi

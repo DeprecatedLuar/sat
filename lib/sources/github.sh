@@ -10,14 +10,34 @@ _GH_RESULT_FILE="/tmp/sat-gh-result-$$"
 # In-memory cache for release binaries
 declare -A _RELEASE_CACHE
 
-# Shared GitHub API wrapper
+# Shared GitHub API wrapper with error handling
 _gh_api() {
     local endpoint="$1"
+    local response
+
     if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
-        gh api "$endpoint" 2>/dev/null
+        response=$(gh api "$endpoint" 2>&1)
+        local exit_code=$?
+        if [[ $exit_code -ne 0 ]]; then
+            [[ -n "$SAT_DEBUG" ]] && echo "[debug] gh api failed for $endpoint" >&2
+            return 1
+        fi
     else
-        curl -sS "https://api.github.com/$endpoint"
+        response=$(curl -sS --fail "https://api.github.com/$endpoint" 2>&1)
+        local exit_code=$?
+        if [[ $exit_code -ne 0 ]]; then
+            [[ -n "$SAT_DEBUG" ]] && echo "[debug] curl failed for $endpoint (exit $exit_code)" >&2
+            return 1
+        fi
     fi
+
+    # Validate JSON response
+    if ! echo "$response" | jq empty 2>/dev/null; then
+        [[ -n "$SAT_DEBUG" ]] && echo "[debug] invalid JSON response from $endpoint" >&2
+        return 1
+    fi
+
+    echo "$response"
 }
 
 # Check if API response is a rate limit error
@@ -128,16 +148,30 @@ EOF
 
     local response
     if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
-        response=$(gh api graphql -f query="$graphql_query" 2>/dev/null)
+        response=$(gh api graphql -f query="$graphql_query" 2>&1)
+        if [[ $? -ne 0 ]]; then
+            [[ -n "$SAT_DEBUG" ]] && echo "[debug] GitHub GraphQL query failed" >&2
+            return 1
+        fi
     else
         # Curl fallback (with optional GITHUB_TOKEN support)
         local auth_header=""
         [[ -n "$GITHUB_TOKEN" ]] && auth_header="Authorization: bearer $GITHUB_TOKEN"
 
-        response=$(curl -sS "https://api.github.com/graphql" \
+        response=$(curl -sS --fail --max-time 10 "https://api.github.com/graphql" \
             ${auth_header:+-H "$auth_header"} \
             -H "Content-Type: application/json" \
-            -d "{\"query\":$(echo "$graphql_query" | jq -Rs .)}" 2>/dev/null)
+            -d "{\"query\":$(echo "$graphql_query" | jq -Rs .)}" 2>&1)
+        if [[ $? -ne 0 ]]; then
+            [[ -n "$SAT_DEBUG" ]] && echo "[debug] GitHub GraphQL curl failed" >&2
+            return 1
+        fi
+    fi
+
+    # Validate JSON
+    if ! echo "$response" | jq empty 2>/dev/null; then
+        [[ -n "$SAT_DEBUG" ]] && echo "[debug] invalid JSON from GitHub GraphQL" >&2
+        return 1
     fi
 
     _gh_check_rate_limit "$response" || return 1

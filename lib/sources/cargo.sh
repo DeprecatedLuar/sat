@@ -4,15 +4,19 @@
 # Search crates.io
 search_cargo() {
     local query="$1"
-    curl -sS "https://crates.io/api/v1/crates?q=$query&per_page=10" 2>/dev/null | \
-        jq -r '.crates[]? | "\(.name) \(.max_version) - \(.description // "" | split("\n")[0])"' 2>/dev/null
+    local response
+
+    response=$(_fetch_json "https://crates.io/api/v1/crates?q=$query&per_page=10" "crates.io search") || return 0
+    echo "$response" | jq -r '.crates[]? | "\(.name) \(.max_version) - \(.description // "" | split("\n")[0])"' 2>/dev/null
 }
 
 # Query latest version from crates.io (before install)
 query_latest_version_cargo() {
     local crate="$1"
-    curl -sS "https://crates.io/api/v1/crates/$crate" 2>/dev/null | \
-        jq -r '.crate.newest_version // empty'
+    local response
+
+    response=$(_fetch_json "https://crates.io/api/v1/crates/$crate" "crates.io/$crate") || return 1
+    echo "$response" | jq -r '.crate.newest_version // empty'
 }
 
 # Install tool via cargo
@@ -88,8 +92,9 @@ check_outdated_cargo() {
     [[ -z "$current" ]] && current=$(cargo install --list 2>/dev/null | grep -oP "^${tool} v\K[^ :]+")
     [[ -z "$current" ]] && return 1
 
-    local latest=$(curl -sS "https://crates.io/api/v1/crates/$tool" 2>/dev/null | \
-        jq -r '.crate.newest_version // empty')
+    local response latest
+    response=$(_fetch_json "https://crates.io/api/v1/crates/$tool" "crates.io/$tool") || return 1
+    latest=$(echo "$response" | jq -r '.crate.newest_version // empty')
     [[ -z "$latest" || "$current" == "$latest" ]] && return 1
     echo "$current $latest"
 }

@@ -3,11 +3,11 @@
 
 sat_untrack() {
     for prog in "$@"; do
-        if [[ -z "$(_sat_manifest_get "$prog")" ]]; then
+        if [[ -z "$(manifest_get "$prog")" ]]; then
             echo "$prog: not tracked"
             continue
         fi
-        _sat_manifest_remove "$prog"
+        manifest_remove "$prog"
         echo "$prog: untracked"
     done
 }

@@ -12,7 +12,7 @@ sat_info() {
         src=$(resolve_source "$prog" "")
         display=$(source_display "$src")
         color=$(source_color "$display")
-        tracked=$(_sat_manifest_get "$prog")
+        tracked=$(manifest_get "$prog")
         ver=$(timeout 2 "$prog" --version 2>/dev/null | head -1 || echo "unknown")
 
         light=$(source_light "$src")

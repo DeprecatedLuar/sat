@@ -192,7 +192,41 @@ run_with_spinner() {
 }
 
 # Run command quietly (suppressed) unless SAT_DEBUG is set
-_run_quiet() { [[ -n "$SAT_DEBUG" ]] && "$@" || "$@" &>/dev/null; }
+# Preserves exit code for error handling
+_run_quiet() {
+    local exit_code
+    if [[ -n "$SAT_DEBUG" ]]; then
+        "$@"
+        exit_code=$?
+    else
+        "$@" &>/dev/null
+        exit_code=$?
+    fi
+    return $exit_code
+}
+
+# Fetch JSON from URL with validation and error handling
+# Args: url, debug_context (e.g., "crates.io/foo")
+# Returns: JSON response on success, error code on failure
+_fetch_json() {
+    local url="$1"
+    local debug_context="$2"
+    local response
+
+    response=$(curl -sS --fail --max-time 10 "$url" 2>&1)
+    if [[ $? -ne 0 ]]; then
+        [[ -n "$SAT_DEBUG" ]] && echo "[debug] $debug_context: curl failed" >&2
+        return 1
+    fi
+
+    # Validate JSON
+    if ! echo "$response" | jq empty 2>/dev/null; then
+        [[ -n "$SAT_DEBUG" ]] && echo "[debug] $debug_context: invalid JSON" >&2
+        return 1
+    fi
+
+    echo "$response"
+}
 
 # Checkmark and X for completion status
 C_CHECK=$'\033[0;92m✓\033[0m'  # Green checkmark

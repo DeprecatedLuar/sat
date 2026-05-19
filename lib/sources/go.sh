@@ -100,7 +100,9 @@ check_outdated_go() {
     [[ -z "$current" || "$current" == "(devel)" ]] && return 1
 
     # Query Go proxy for latest version
-    local latest=$(curl -sS "https://proxy.golang.org/${import_path}/@latest" 2>/dev/null | jq -r '.Version // empty')
+    local response latest
+    response=$(_fetch_json "https://proxy.golang.org/${import_path}/@latest" "go proxy/$import_path") || return 1
+    latest=$(echo "$response" | jq -r '.Version // empty')
     [[ -z "$latest" || "$current" == "$latest" ]] && return 1
 
     echo "$current $latest"

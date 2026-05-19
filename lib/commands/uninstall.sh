@@ -29,7 +29,7 @@ sat_uninstall() {
             TRACKED=false
         else
             # Manifest lookup
-            SOURCE=$(_sat_manifest_get "$PROGRAM")
+            SOURCE=$(manifest_get "$PROGRAM")
 
             # If not found directly, search by repo name (for gh:user/repo entries)
             if [[ -z "$SOURCE" ]]; then
@@ -66,7 +66,7 @@ sat_uninstall() {
         fi
 
         if [[ $_result -eq 0 ]]; then
-            [[ "$TRACKED" == true ]] && _sat_manifest_remove "$BINARY"
+            [[ "$TRACKED" == true ]] && manifest_remove "$BINARY"
             status_ok "$BINARY removed" "$SOURCE"
         else
             status_fail "$BINARY removal failed"
