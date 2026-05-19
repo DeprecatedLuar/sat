@@ -26,7 +26,13 @@ DEFAULT_EXCLUSIONS=(
     'isdv4-*' 'xsetwacom' 'xgamma' 'xbacklight'
 
     # Audio low-level utilities
-    'alsa-*' 'pulse*' 'pactl' 'pacmd'
+    'alsa-*' 'pulse*' 'pactl' 'pacmd' 'alsabat*'
+
+    # Network infrastructure
+    'nm*'
+
+    # CPU/Power management
+    'cpufreq-*'
 )
 
 # Load user exclusion patterns (cached)
@@ -118,8 +124,8 @@ is_excluded() {
             case "$prog" in
                 systemd|systemctl|journalctl|udevadm|dbus-*|polkit*) return 0 ;;
                 sudo|su|login|getty|hostname|which) return 0 ;;
-                # sudo helpers (keep sudo and sudoedit user tools)
-                cvtsudoers|sudo_logsrvd|sudo_sendlog|sudoreplay|visudo) return 0 ;;
+                # sudo helpers (keep sudo, sudoedit, visudo user tools)
+                cvtsudoers|sudo_logsrvd|sudo_sendlog|sudoreplay) return 0 ;;
             esac
 
             # Audio infrastructure (ALSA, PulseAudio already covered by patterns)
@@ -159,6 +165,8 @@ is_excluded() {
                 talk|talkd|telnet|telnetd) return 0 ;;
                 # NetworkManager infrastructure (not user tools like nmcli/nmtui)
                 NetworkManager|nm-online) return 0 ;;
+                # DNS/DHCP servers
+                dnsmasq) return 0 ;;
                 # netctl (Arch network manager)
                 netctl|netctl-auto|wifi-menu) return 0 ;;
                 # NFS infrastructure
@@ -175,12 +183,15 @@ is_excluded() {
 
             # Filesystem utilities (beyond glob patterns)
             case "$prog" in
+                # e2fsprogs utilities (not caught by e2* pattern)
+                badblocks|chattr|compile_et|debugfs|dumpe2fs|filefrag) return 0 ;;
+                logsave|lsattr|mk_cmds|mklost+found|tune2fs) return 0 ;;
                 # btrfs (already has btrfs-* pattern, add root command)
                 btrfs|btrfsck|btrfstune) return 0 ;;
                 # Snapper daemon (keep snapper user tool)
                 snapperd|mksubvolume|snbk) return 0 ;;
                 # dosfs/FAT
-                dosfsck|dosfslabel|fatlabel) return 0 ;;
+                dosfsck|dosfslabel|fatlabel|mkdosfs) return 0 ;;
                 # exfat
                 dump.exfat|exfat2img|exfatlabel|tune.exfat) return 0 ;;
                 # f2fs
@@ -207,12 +218,13 @@ is_excluded() {
                 biosdecode|dmidecode|ownership|vpddecode) return 0 ;;
                 # Disk tools
                 ethtool|hdparm|idectl|ultrabayd|wiper.sh|lsscsi|systool) return 0 ;;
-                # Hardware detection
+                # Hardware detection and monitoring
                 hwdetect|check_hd|convert_hd|getsysinfo|mk_isdnhwdb) return 0 ;;
+                hwinfo|smartctl|cpupower) return 0 ;;
                 # Firmware updates (infrastructure, not the fwupd/fwupdmgr user tools)
                 fwupd-dbxtool|fwupdtool) return 0 ;;
                 # SCSI utilities (sg3_utils - 100+ tools)
-                scsi_*|sg_*|sginfo|sgm_dd|sgp_dd) return 0 ;;
+                scsi_*|sg_*|sginfo|sgm_dd|sgp_dd|rescan-scsi-bus.sh) return 0 ;;
                 # SMART monitoring
                 smartd|update-smart-drivedb) return 0 ;;
                 # USB utilities
@@ -227,7 +239,7 @@ is_excluded() {
             # Boot/EFI infrastructure
             case "$prog" in
                 # EFI utilities
-                efibootdump|cert-to-efi-*|efi-readvar|efi-updatevar|efitool-mkusb) return 0 ;;
+                efibootdump|efibootmgr|cert-to-efi-*|efi-readvar|efi-updatevar|efitool-mkusb) return 0 ;;
                 flash-var|hash-to-efi-sig-list|sig-list-to-certs|sign-efi-sig-list) return 0 ;;
                 # Bootloader tools
                 limine-*|mkinitcpio|update-initramfs) return 0 ;;
@@ -265,7 +277,7 @@ is_excluded() {
                 # Manual page infrastructure
                 accessdb|apropos|catman|lexgrog|man-recode|mandb|manpath|whatis) return 0 ;;
                 # Texinfo documentation tools
-                install-info|makeinfo|pdftexi2dvi|pod2texi|texi2any|texi2dvi|texi2pdf|texindex) return 0 ;;
+                info|install-info|makeinfo|pdftexi2dvi|pod2texi|texi2any|texi2dvi|texi2pdf|texindex) return 0 ;;
                 # Misc infrastructure
                 logrotate|lsb_release|lsinitcpio|xsettingsd|dump_xsettings) return 0 ;;
                 # Thumbnail generators
@@ -288,12 +300,12 @@ is_excluded() {
                 obs-ffmpeg-mux|obs-nvenc-test) return 0 ;;
                 # Boot detection
                 linux-boot-prober|os-prober) return 0 ;;
-                # Pacman helper utilities (including pkgfile)
-                checkupdates|checkrebuild|paccache|pacdiff|paclist|paclog-pkglist) return 0 ;;
-                pacscripts|pacsearch|pacsort|pactree|rankmirrors|updpkgsums) return 0 ;;
-                pkgfile|pkgfiled) return 0 ;;
-                # File search databases
-                locate|mlocate|plocate|plocate-build|updatedb) return 0 ;;
+                # Pacman obscure helpers (keep: checkupdates, paccache, pacdiff, pactree, checkrebuild)
+                paclist|paclog-pkglist|pacscripts|pacsearch|pacsort|rankmirrors|updpkgsums) return 0 ;;
+                # pkgfile daemon only (keep pkgfile search command)
+                pkgfiled) return 0 ;;
+                # File search database builders only (keep locate/plocate search commands)
+                plocate-build|updatedb) return 0 ;;
                 # Python/Ruby infrastructure helpers
                 idle[0-9]*|pydoc[0-9]*|python[0-9]*|websockets) return 0 ;;
                 syntax_suggest) return 0 ;;

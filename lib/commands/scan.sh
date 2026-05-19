@@ -59,6 +59,14 @@ sat_scan() {
             esac
         fi
 
+        # For system package managers: skip child binaries (no version = auxiliary tool)
+        # Philosophy: track parent packages only (if you delete parent, children die too)
+        case "$source" in
+            apt|pacman|apk|dnf)
+                [[ -z "$version" ]] && return 1
+                ;;
+        esac
+
         # Build full source string and add to manifest
         local src_string=$(build_source_string "$source" "$identity" "$version")
         manifest_add "$prog" "$src_string"
