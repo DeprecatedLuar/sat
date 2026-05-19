@@ -14,68 +14,10 @@ source "$SAT_LIB/sources/appimage.sh"
 
 # Scan modules
 source "$SAT_LIB/scan/system.sh"
+source "$SAT_LIB/scan/exclusion.sh"
 
 sat_scan() {
     echo "Scanning ecosystems..."
-
-    # Helper functions (defined first to avoid bash parser issues)
-    is_excluded() {
-        local prog="$1" src="$2"
-        # Global exclusions
-        case "$prog" in
-            .*|_*|*-config|*-settings) return 0 ;;
-        esac
-        # Per-source exclusions
-        case "$src" in
-            cargo) [[ "$prog" == cargo-* || "$prog" == clippy-driver || "$prog" == rust[!u]* || "$prog" == rls ]] && return 0 ;;
-            nix)   [[ "$prog" == nix || "$prog" == nix-* ]] && return 0 ;;
-            nixos|pacman|apt|dnf|apk)
-                # System package manager exclusions (infrastructure, not user apps)
-
-                # Package manager tools themselves
-                case "$prog" in
-                    nix|nix-*|nixos-*) return 0 ;;  # NixOS
-                    pacman|makepkg|pacman-*) return 0 ;;  # Arch
-                    apt|apt-*|dpkg|dpkg-*|aptitude) return 0 ;;  # Debian/Ubuntu
-                    dnf|yum|rpm|rpm-*) return 0 ;;  # Fedora/RHEL
-                    apk) return 0 ;;  # Alpine
-                esac
-
-                # Desktop environment infrastructure (services/daemons, not apps)
-                case "$prog" in
-                    # XFCE services
-                    xfce4-panel|xfce4-session|xfce4-power-manager|xfce4-settings|xfdesktop|xfwm4|xfce4-screensaver) return 0 ;;
-                    # GNOME services
-                    gnome-keyring|gnome-settings-daemon|gnome-session|gvfs*) return 0 ;;
-                    # KDE/Plasma services
-                    plasma-*|kwin*|kdeinit*) return 0 ;;
-                esac
-
-                # X11/Wayland system utilities (not apps)
-                case "$prog" in
-                    xinit|xinput|xlsclients|xprop|xrandr|xrdb|xset|xsetroot|xterm) return 0 ;;
-                    wayland-scanner|weston-*) return 0 ;;
-                esac
-
-                # System daemons and infrastructure
-                case "$prog" in
-                    systemd|systemctl|journalctl|udevadm|dbus-*|polkit*) return 0 ;;
-                    sudo|su|login|getty) return 0 ;;
-                esac
-                ;;
-            *)
-                # Git infrastructure
-                [[ "$prog" == git-* || "$prog" == scalar || "$prog" == trash-* ]] && return 0
-                # Language servers (infrastructure)
-                case "$prog" in
-                    gopls|rust-analyzer|typescript-language-server|pyright) return 0 ;;
-                esac
-                # sat internal dependencies
-                [[ "$prog" == huber ]] && return 0
-                ;;
-        esac
-        return 1
-    }
 
     # Try to add tool to manifest (returns 0 on success, 1 if skipped)
     # Args: prog, source_or_full_string

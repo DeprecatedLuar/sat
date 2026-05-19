@@ -262,6 +262,89 @@ Automatic fallback chain (`install_github` with `method=auto`):
 
 `sat search` queries multiple ecosystems in parallel (system, flatpak, brew, nix, cargo, pypi, npm, github). Each has dedicated search logic in `lib/search.sh`. Color-coded output with version normalization.
 
+## Scan System
+
+### Exclusion Architecture
+
+Centralized exclusion logic in `lib/scan/exclusion.sh` prevents infrastructure noise from polluting manifests.
+
+**Default exclusions** (embedded in code):
+- Filesystem utilities (xfs_*, btrfs-*, fsck.*, mkfs.*)
+- Network/WiFi infrastructure (wpa_*, dhcp*, iw*)
+- Bluetooth utilities (bluez-*, bluetooth*)
+- System services (systemd*, udev*, polkit*)
+- Low-level X11/audio tools (xdg-*, pulse*, alsa-*)
+
+**User customization:**
+Users can extend defaults via `~/.config/sat/exclude` (glob patterns):
+```bash
+# My custom exclusions
+gcc*
+g++*
+steam*
+```
+
+**Implementation:**
+```bash
+is_excluded() {
+    local prog="$1" src="$2"
+    # Check user + default patterns (glob matching)
+    for pattern in "${EXCLUSION_PATTERNS[@]}"; do
+        [[ "$prog" == $pattern ]] && return 0
+    done
+    # Then check hardcoded safety patterns per source
+}
+```
+
+All scan sources (pacman, apt, cargo, etc.) use `is_excluded()` for consistent filtering.
+
+### OS Detection
+
+Uses `/etc/os-release` with smart fallback for derivative distros.
+
+**Primary detection:** `ID_LIKE` field (e.g., CachyOS sets `ID_LIKE=arch`)
+- Automatically supports any distro declaring its base
+- No code changes needed for new derivatives
+
+**Fallback:** Direct `ID` matching for base distros without `ID_LIKE`
+
+**Cache:** Results stored in `~/.local/share/sat/os-info`:
+```bash
+SAT_OS=linux
+SAT_DISTRO=cachyos
+SAT_DISTRO_FAMILY=arch
+SAT_PKG_MANAGER=pacman
+```
+
+Detection script lives in separate repo: `the-satellite/internal/os_detection.sh`
+
+### System Package Scanning
+
+**Performance optimization for Arch/pacman:**
+```bash
+# OLD: Call pacman -Qo for every binary (thousands of calls, minutes)
+for bin in /usr/bin/*; do
+    package=$(pacman -Qo "$bin")
+done
+
+# NEW: Single pipeline (batched query, ~500ms)
+pacman -Qeq | xargs pacman -Ql | awk '/\/usr\/bin\// {print $2}' | while read bin; do
+    _try_add_tool "$(basename "$bin")" "pacman"
+done
+```
+
+**Scan strategy:**
+- Query explicit packages only (`pacman -Qeq`, `apt-mark showmanual`, etc.)
+- Use exclusion patterns to filter infrastructure
+- Track actual binaries, not packages (one package → many binaries)
+
+**Per-distro scanners** in `lib/scan/system.sh`:
+- `_scan_pacman()` - Arch/CachyOS/Manjaro
+- `_scan_apt()` - Debian/Ubuntu derivatives
+- `_scan_dnf()` - Fedora/RHEL derivatives
+- `_scan_apk()` - Alpine Linux
+- `_scan_nixos()` - NixOS system packages
+
 ## Development
 
 **Installation:**
