@@ -1,8 +1,24 @@
 #!/usr/bin/env bash
 # exclusion.sh - Centralized exclusion patterns for package scanning
 
+# ============================================================================
+# Configuration Constants
+# ============================================================================
+
+# Paths
+readonly DEFAULT_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}"
+readonly SAT_CONFIG_DIR="sat"
+readonly EXCLUDE_FILE="exclude"
+
 # User config file location
-SAT_EXCLUDE_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/sat/exclude"
+SAT_EXCLUDE_CONFIG="$DEFAULT_CONFIG_DIR/$SAT_CONFIG_DIR/$EXCLUDE_FILE"
+
+# Return codes
+readonly EXCLUDED=0
+readonly INCLUDED=1
+
+# Pattern matching
+readonly COMMENT_PATTERN='^[[:space:]]*#'
 
 # Default exclusion patterns (infrastructure, not user apps)
 # Users can override/extend via ~/.config/sat/exclude
@@ -46,7 +62,7 @@ _load_exclusions() {
     # Extend with user patterns if config exists
     if [[ -f "$SAT_EXCLUDE_CONFIG" ]]; then
         while IFS= read -r pattern; do
-            [[ -z "$pattern" || "$pattern" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "$pattern" || "$pattern" =~ $COMMENT_PATTERN ]] && continue
             EXCLUSION_PATTERNS+=("$pattern")
         done < "$SAT_EXCLUDE_CONFIG"
     fi
@@ -64,12 +80,12 @@ is_excluded() {
     # Check user + default patterns (glob matching)
     for pattern in "${EXCLUSION_PATTERNS[@]}"; do
         # shellcheck disable=SC2053
-        [[ "$prog" == $pattern ]] && return 0
+        [[ "$prog" == $pattern ]] && return $EXCLUDED
     done
 
     # Global exclusions (all sources)
     case "$prog" in
-        .*|_*|*-config|*-settings) return 0 ;;
+        .*|_*|*-config|*-settings) return $EXCLUDED ;;
     esac
 
     # Per-source exclusions (hardcoded safety patterns)

@@ -6,7 +6,99 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `sat` (Satellite) is a universal package installer, search tool, and temporary environment manager. It abstracts package installation across multiple sources with automatic fallback, provides cross-ecosystem package search, and ephemeral shell sessions with auto-cleanup.
 
-## Architecture
+## Current State: Bash → Go Migration
+
+**Current implementation:** Bash (fully functional in `sat` binary + `lib/` directory)
+**Target implementation:** Go (detailed in `implementation-plan.md`)
+
+The bash implementation is production-ready and actively maintained. The Go rewrite is planned to improve performance, testability, and maintainability while preserving all functionality. See `implementation-plan.md` for the phase-by-phase migration strategy.
+
+## Build & Development
+
+**Bash implementation (current):**
+```bash
+# Install locally
+cp sat ~/.local/bin/sat && chmod +x ~/.local/bin/sat
+
+# Development workflow with live lib updates
+rm -rf ~/.local/share/sat/lib
+ln -s ~/Workspace/dev/sat/lib ~/.local/share/sat/lib
+
+# Run commands directly from repo
+./sat install ripgrep
+./sat --debug search fd  # Debug mode shows fallback chain
+```
+
+**Go implementation (planned):**
+```bash
+# Once Phase 1+ complete:
+go build -o sat ./cmd/sat
+go test ./...
+go vet ./...
+```
+
+Binary changes require copying to `~/.local/bin/sat`. Library changes (in symlinked `lib/`) are immediately active.
+
+## Architecture (Go Target)
+
+**Planned Go structure** (see `implementation-plan.md` for implementation phases):
+
+```
+cmd/sat/
+  main.go                   # CLI router with manual switch statement (no cobra)
+internal/
+  manifest/
+    source.go              # Source string parsing (build/get type/identity/version)
+    manifest.go            # System manifest operations
+    master.go              # Shell master manifest (multi-session tracking)
+    session.go             # Per-PID session manifest
+    track.go               # Context-aware install tracking (routes via SAT_MANIFEST_TARGET)
+    paths.go               # Manifest file paths with SAT_DATA override
+  sources/
+    system.go              # Distro package managers (pacman, apt, dnf, apk)
+    cargo.go               # Rust crates.io
+    npm.go                 # Node packages
+    uv.go                  # Python via uv
+    goinstall.go           # Go packages
+    brew.go                # Homebrew
+    nix.go                 # Nix packages
+    flatpak.go             # Flatpak apps with wrapper generation
+    github.go              # GitHub releases (huber, appimage, go, python methods)
+    appimage.go            # AppImage extraction and installation
+  commands/
+    install.go             # sat install with fallback chain
+    search.go              # Parallel multi-ecosystem search
+    list.go                # Display tracked packages
+    scan.go                # Scan ecosystems and populate manifest
+    uninstall.go           # Remove packages
+    update.go              # Update packages
+    outdated.go            # Check for updates
+    shell.go               # Ephemeral tmux sessions
+    track.go               # Manual manifest add/remove
+    info.go                # Package metadata display
+  scan/
+    exclusion.go           # Infrastructure pattern filtering
+    system.go              # Per-distro system package scanning
+  common/
+    detect.go              # Binary source detection, tool spec parsing
+    os.go                  # OS detection cache, package existence checks
+    run.go                 # Quiet command execution, JSON fetching
+    cleanup.go             # Orphaned session cleanup
+  ui/
+    colors.go              # ANSI color constants (~30 lines)
+    ui.go                  # Source mapping + display formatting (~100 lines)
+    spinner.go             # Animation logic (~60 lines)
+```
+
+**Key Go design decisions:**
+- Manual CLI routing (no cobra) for simplicity and startup performance
+- Context-aware manifest routing via `SAT_MANIFEST_TARGET` env var (same as bash)
+- Source interface: Install/Uninstall/Update/GetVersion/QueryLatestVersion/CheckOutdated/Search
+- Parallel search via goroutines + sync.WaitGroup
+- No daemon/background process - all commands are synchronous
+- XDG paths with `SAT_DATA` override for testing
+
+## Architecture (Bash Current)
 
 ```
 sat (router + offline commands)
@@ -344,6 +436,30 @@ done
 - `_scan_dnf()` - Fedora/RHEL derivatives
 - `_scan_apk()` - Alpine Linux
 - `_scan_nixos()` - NixOS system packages
+
+## Migration Strategy (Bash → Go)
+
+**Implementation phases** (detailed in `implementation-plan.md`):
+
+1. **Phase 1-2:** Go skeleton + manifest system (data layer foundation)
+2. **Phase 3:** UI layer + common utilities (import-safe, no circular deps)
+3. **Phase 4-6:** Source modules (system/cargo/brew/nix → npm/uv/go/flatpak → github/appimage)
+4. **Phase 7-11:** Command implementations (install → list/track/info → scan → search → uninstall/update/outdated)
+5. **Phase 12:** Shell (tmux ephemeral sessions, most complex)
+6. **Phase 13:** Distribution (GitHub Actions, satellite cargo-bay integration)
+
+**Critical constraints:**
+- Import order: `manifest` → `pkg/ui` → `internal/common` → `sources` → `commands` (no circular deps)
+- Manifest operations MUST go through `internal/manifest` package (single source of truth)
+- Source modules implement standard interface (Install/Uninstall/Update/GetVersion/QueryLatestVersion/CheckOutdated/Search)
+- Display helpers in `pkg/ui` parse source strings via `manifest.GetSourceType` (never duplicate parsing)
+- Debug output to stderr with `[debug]` prefix when `SAT_DEBUG` set
+- Use `RunQuiet()` for suppressed output (visible in debug mode)
+
+**Testing during migration:**
+- Each phase has explicit success criteria (see implementation-plan.md)
+- Bash implementation remains production until Go rewrite is feature-complete
+- Both versions share same manifest format (seamless transition)
 
 ## Development
 
