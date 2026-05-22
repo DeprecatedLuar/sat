@@ -17,6 +17,9 @@ const (
 
 	// Global flags
 	FlagDebug = "--debug"
+
+	// Repository
+	githubRepo = "DeprecatedLuar/sat"
 )
 
 var version = "dev"
@@ -82,7 +85,10 @@ func main() {
 	case "outdated":
 		notImplemented("outdated")
 	case "update":
-		notImplemented("update")
+		if err := commands.HandleUpdate(commandArgs, version, githubRepo); err != nil {
+			fmt.Fprintf(os.Stderr, "sat: %v\n", err)
+			os.Exit(1)
+		}
 	case "info":
 		notImplemented("info")
 	case "clone":
