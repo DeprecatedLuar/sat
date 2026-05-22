@@ -25,6 +25,7 @@ const (
 	PkgMgrPacman = "pacman"
 	PkgMgrAPK    = "apk"
 	PkgMgrDNF    = "dnf"
+	PkgMgrNix    = "nix"
 	PkgMgrUnknown = "unknown"
 
 	// Version parsing constants
@@ -492,6 +493,387 @@ func stripDebianVersion(version string) string {
 	// Remove revision (-8build1)
 	version = regexp.MustCompile(`-\d+.*$`).ReplaceAllString(version, "")
 	return version
+}
+
+// SystemScan scans for explicitly-installed system packages
+func SystemScan() ([]Package, error) {
+	mgr := common.GetPkgManager()
+	if mgr == "" || mgr == PkgMgrUnknown {
+		return nil, nil
+	}
+
+	var packages []Package
+	var err error
+
+	switch mgr {
+	case PkgMgrPacman:
+		packages, err = scanPacman()
+	case PkgMgrAPT:
+		packages, err = scanApt()
+	case PkgMgrDNF:
+		packages, err = scanDNF()
+	case PkgMgrAPK:
+		packages, err = scanAPK()
+	case PkgMgrNix:
+		// NixOS system packages (declarative, read-only)
+		packages, err = scanNixOS()
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return packages, nil
+}
+
+// scanNixOS scans NixOS system packages from declarative configuration
+func scanNixOS() ([]Package, error) {
+	if _, err := exec.LookPath("nixos-option"); err != nil {
+		return nil, nil
+	}
+
+	// Query system packages
+	var output bytes.Buffer
+	cmd := exec.Command("nixos-option", "environment.systemPackages")
+	cmd.Stdout = &output
+	cmd.Stderr = nil
+
+	if err := cmd.Run(); err != nil {
+		return nil, nil
+	}
+
+	// Parse output for derivation names
+	userPackages := make(map[string]bool)
+	for _, line := range strings.Split(output.String(), "\n") {
+		// Look for <derivation package-name-version>
+		if strings.Contains(line, "<derivation ") {
+			start := strings.Index(line, "<derivation ") + 12
+			end := strings.Index(line[start:], ">")
+			if end != -1 {
+				deriv := line[start : start+end]
+				// Strip version: package-name-1.2.3 → package-name
+				pkg := strings.Split(deriv, "-")[0]
+				userPackages[pkg] = true
+			}
+		}
+	}
+
+	if len(userPackages) == 0 {
+		return nil, nil
+	}
+
+	var packages []Package
+
+	entries, err := os.ReadDir("/run/current-system/sw/bin")
+	if err != nil {
+		return nil, nil
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil || info.Mode()&0111 == 0 {
+			continue
+		}
+
+		// Only add if binary name matches a user-installed package
+		if userPackages[entry.Name()] {
+			version := NixOSGetVersion(entry.Name())
+			packages = append(packages, Package{
+				Name:     entry.Name(),
+				Source:   "nixos",
+				Identity: "",
+				Version:  version,
+			})
+		}
+	}
+
+	return packages, nil
+}
+
+// scanPacman scans explicitly-installed Arch packages
+func scanPacman() ([]Package, error) {
+	if _, err := exec.LookPath(PkgMgrPacman); err != nil {
+		return nil, nil
+	}
+
+	// Optimized: query all explicit packages at once, then filter for /usr/bin binaries
+	var output bytes.Buffer
+	cmd := exec.Command("bash", "-c", "pacman -Qeq 2>/dev/null | xargs pacman -Ql 2>/dev/null")
+	cmd.Stdout = &output
+
+	if err := cmd.Run(); err != nil {
+		return nil, nil
+	}
+
+	var packages []Package
+	lines := strings.Split(output.String(), "\n")
+
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		binPath := fields[1]
+
+		// Filter for /usr/bin or /usr/local/bin binaries
+		if !strings.Contains(binPath, "/usr/bin/") && !strings.Contains(binPath, "/usr/local/bin/") {
+			continue
+		}
+		// Skip if it's a subdirectory (not a direct binary)
+		if strings.Count(binPath[strings.LastIndex(binPath, "/bin/")+5:], "/") > 0 {
+			continue
+		}
+
+		// Check if executable
+		info, err := os.Stat(binPath)
+		if err != nil || info.Mode()&0111 == 0 {
+			continue
+		}
+
+		prog := binPath[strings.LastIndex(binPath, "/")+1:]
+		version := GetVersion(prog)
+
+		packages = append(packages, Package{
+			Name:     prog,
+			Source:   PkgMgrPacman,
+			Identity: "",
+			Version:  version,
+		})
+	}
+
+	return packages, nil
+}
+
+// scanApt scans manually-installed Debian/Ubuntu packages
+func scanApt() ([]Package, error) {
+	// Get list of manually installed packages
+	var output bytes.Buffer
+	cmd := exec.Command("apt-mark", "showmanual")
+	cmd.Stdout = &output
+
+	if err := cmd.Run(); err != nil {
+		return nil, nil
+	}
+
+	manualPackages := make(map[string]bool)
+	for _, pkg := range strings.Split(output.String(), "\n") {
+		pkg = strings.TrimSpace(pkg)
+		if pkg != "" {
+			manualPackages[pkg] = true
+		}
+	}
+
+	if len(manualPackages) == 0 {
+		return nil, nil
+	}
+
+	var packages []Package
+	binDirs := []string{"/usr/bin", "/usr/local/bin", "/bin"}
+
+	for _, binDir := range binDirs {
+		entries, err := os.ReadDir(binDir)
+		if err != nil {
+			continue
+		}
+
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+
+			binPath := binDir + "/" + entry.Name()
+			info, err := entry.Info()
+			if err != nil || info.Mode()&0111 == 0 {
+				continue
+			}
+
+			// Find which package owns this binary
+			var pkgOutput bytes.Buffer
+			pkgCmd := exec.Command("dpkg", "-S", binPath)
+			pkgCmd.Stdout = &pkgOutput
+			pkgCmd.Stderr = nil
+
+			if pkgCmd.Run() != nil {
+				continue
+			}
+
+			// Parse output: "package: /path/to/binary"
+			pkgLine := strings.TrimSpace(pkgOutput.String())
+			parts := strings.SplitN(pkgLine, ":", 2)
+			if len(parts) < 1 {
+				continue
+			}
+
+			pkgName := strings.TrimSpace(parts[0])
+			if manualPackages[pkgName] {
+				version := GetVersion(entry.Name())
+				packages = append(packages, Package{
+					Name:     entry.Name(),
+					Source:   PkgMgrAPT,
+					Identity: "",
+					Version:  version,
+				})
+			}
+		}
+	}
+
+	return packages, nil
+}
+
+// scanDNF scans user-installed Fedora/RHEL packages
+func scanDNF() ([]Package, error) {
+	// Get user-installed packages
+	var output bytes.Buffer
+	cmd := exec.Command(PkgMgrDNF, "repoquery", "--userinstalled")
+	cmd.Stdout = &output
+
+	if err := cmd.Run(); err != nil {
+		return nil, nil
+	}
+
+	userPackages := make(map[string]bool)
+	for _, line := range strings.Split(output.String(), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Strip version: package-1.2.3-4.fc36 → package
+		pkg := strings.Split(line, "-")[0]
+		userPackages[pkg] = true
+	}
+
+	if len(userPackages) == 0 {
+		return nil, nil
+	}
+
+	var packages []Package
+	binDirs := []string{"/usr/bin", "/usr/local/bin"}
+
+	for _, binDir := range binDirs {
+		entries, err := os.ReadDir(binDir)
+		if err != nil {
+			continue
+		}
+
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+
+			binPath := binDir + "/" + entry.Name()
+			info, err := entry.Info()
+			if err != nil || info.Mode()&0111 == 0 {
+				continue
+			}
+
+			// Find which package owns this binary
+			var pkgOutput bytes.Buffer
+			pkgCmd := exec.Command("rpm", "-qf", binPath)
+			pkgCmd.Stdout = &pkgOutput
+			pkgCmd.Stderr = nil
+
+			if pkgCmd.Run() != nil {
+				continue
+			}
+
+			// Parse output and strip version
+			pkgLine := strings.TrimSpace(pkgOutput.String())
+			pkgName := strings.Split(pkgLine, "-")[0]
+
+			if userPackages[pkgName] {
+				version := GetVersion(entry.Name())
+				packages = append(packages, Package{
+					Name:     entry.Name(),
+					Source:   PkgMgrDNF,
+					Identity: "",
+					Version:  version,
+				})
+			}
+		}
+	}
+
+	return packages, nil
+}
+
+// scanAPK scans explicitly-installed Alpine packages
+func scanAPK() ([]Package, error) {
+	// Read /etc/apk/world for explicitly-installed packages
+	data, err := os.ReadFile("/etc/apk/world")
+	if err != nil {
+		return nil, nil
+	}
+
+	worldPackages := make(map[string]bool)
+	for _, line := range strings.Split(string(data), "\n") {
+		pkg := strings.TrimSpace(line)
+		if pkg != "" {
+			worldPackages[pkg] = true
+		}
+	}
+
+	if len(worldPackages) == 0 {
+		return nil, nil
+	}
+
+	var packages []Package
+	binDirs := []string{"/usr/bin", "/usr/local/bin", "/bin"}
+
+	for _, binDir := range binDirs {
+		entries, err := os.ReadDir(binDir)
+		if err != nil {
+			continue
+		}
+
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+
+			binPath := binDir + "/" + entry.Name()
+			info, err := entry.Info()
+			if err != nil || info.Mode()&0111 == 0 {
+				continue
+			}
+
+			// Find which package owns this binary
+			var pkgOutput bytes.Buffer
+			pkgCmd := exec.Command("apk", "info", "--who-owns", binPath)
+			pkgCmd.Stdout = &pkgOutput
+			pkgCmd.Stderr = nil
+
+			if pkgCmd.Run() != nil {
+				continue
+			}
+
+			// Parse output and strip version
+			output := strings.TrimSpace(pkgOutput.String())
+			fields := strings.Fields(output)
+			if len(fields) == 0 {
+				continue
+			}
+
+			pkgName := fields[len(fields)-1]
+			// Strip version: package-1.2.3 → package
+			pkgName = strings.Split(pkgName, "-")[0]
+
+			if worldPackages[pkgName] {
+				version := GetVersion(entry.Name())
+				packages = append(packages, Package{
+					Name:     entry.Name(),
+					Source:   PkgMgrAPK,
+					Identity: "",
+					Version:  version,
+				})
+			}
+		}
+	}
+
+	return packages, nil
 }
 
 // Debug helper

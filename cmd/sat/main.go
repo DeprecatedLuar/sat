@@ -74,6 +74,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "sat: scan failed: %v\n", err)
 			os.Exit(1)
 		}
+	case "pulverize":
+		if err := commands.Pulverize(); err != nil {
+			fmt.Fprintf(os.Stderr, "sat: pulverize failed: %v\n", err)
+			os.Exit(1)
+		}
 	case "outdated":
 		notImplemented("outdated")
 	case "update":
@@ -134,6 +139,7 @@ Commands:
   track <program>     - Add existing program to manifest for sat management
   untrack <program>   - Remove from manifest without uninstalling
   scan                - Scan ecosystem dirs and add all found packages
+  pulverize           - Clear entire manifest (with confirmation)
   outdated            - Show available updates for tracked packages
   pull                - Refresh sat library from GitHub
   clone <repo> [dest] - Clone your repo

@@ -286,3 +286,40 @@ func NixSearch(query string) ([]string, error) {
 
 	return results, nil
 }
+
+// NixScan scans for installed nix user profile packages
+func NixScan() ([]Package, error) {
+	nixProfile := filepath.Join(os.Getenv("HOME"), ".nix-profile/bin")
+	if !dirExists(nixProfile) {
+		return nil, nil
+	}
+
+	var packages []Package
+	entries, err := os.ReadDir(nixProfile)
+	if err != nil {
+		return nil, nil
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil || !isExecutable(info) {
+			continue
+		}
+
+		prog := entry.Name()
+		version := NixGetVersion(prog)
+
+		packages = append(packages, Package{
+			Name:     prog,
+			Source:   "nix",
+			Identity: "",
+			Version:  version,
+		})
+	}
+
+	return packages, nil
+}

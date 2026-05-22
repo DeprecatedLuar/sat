@@ -261,3 +261,57 @@ func BrewSearch(query string) ([]string, error) {
 
 	return nil, fmt.Errorf("package not found in brew formulae or casks")
 }
+
+// BrewScan scans for explicitly installed brew packages
+func BrewScan() ([]Package, error) {
+	if _, err := exec.LookPath("brew"); err != nil {
+		return nil, nil
+	}
+
+	var packages []Package
+
+	// Get brew leaves (explicit installs)
+	var leavesOutput bytes.Buffer
+	leavesCmd := exec.Command("brew", "leaves")
+	leavesCmd.Stdout = &leavesOutput
+
+	if leavesCmd.Run() != nil {
+		return nil, nil
+	}
+
+	for _, formula := range strings.Split(leavesOutput.String(), "\n") {
+		formula = strings.TrimSpace(formula)
+		if formula == "" {
+			continue
+		}
+
+		// Get actual binaries installed by this formula
+		var listOutput bytes.Buffer
+		listCmd := exec.Command("brew", "list", formula)
+		listCmd.Stdout = &listOutput
+
+		if listCmd.Run() != nil {
+			continue
+		}
+
+		// Get version
+		version := BrewGetVersion(formula)
+
+		for _, line := range strings.Split(listOutput.String(), "\n") {
+			if !strings.Contains(line, "/bin/") {
+				continue
+			}
+			prog := strings.TrimSpace(line)
+			prog = prog[strings.LastIndex(prog, "/")+1:]
+
+			packages = append(packages, Package{
+				Name:     prog,
+				Source:   "brew",
+				Identity: "",
+				Version:  version,
+			})
+		}
+	}
+
+	return packages, nil
+}

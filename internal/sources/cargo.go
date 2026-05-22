@@ -6,12 +6,21 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/DeprecatedLuar/sat/internal/common"
 	"github.com/DeprecatedLuar/sat/internal/manifest"
 )
+
+// Package represents a discovered package
+type Package struct {
+	Name     string
+	Source   string
+	Identity string
+	Version  string
+}
 
 // Cargo API response structures
 type cargoSearchResponse struct {
@@ -236,4 +245,60 @@ func CargoSearch(query string) ([]string, error) {
 	}
 
 	return results, nil
+}
+
+// CargoScan scans for installed cargo packages
+func CargoScan() ([]Package, error) {
+	dir := cargoBinDir()
+	if dir == "" || !dirExists(dir) {
+		return nil, nil
+	}
+
+	var packages []Package
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, nil
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil || !isExecutable(info) {
+			continue
+		}
+
+		prog := entry.Name()
+		version := CargoGetVersion(prog)
+
+		packages = append(packages, Package{
+			Name:     prog,
+			Source:   "cargo",
+			Identity: "",
+			Version:  version,
+		})
+	}
+
+	return packages, nil
+}
+
+// Helper functions
+
+func cargoBinDir() string {
+	cargoHome := os.Getenv("CARGO_HOME")
+	if cargoHome == "" {
+		cargoHome = filepath.Join(os.Getenv("HOME"), ".cargo")
+	}
+	return filepath.Join(cargoHome, "bin")
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func isExecutable(info os.FileInfo) bool {
+	return info.Mode()&0111 != 0
 }
