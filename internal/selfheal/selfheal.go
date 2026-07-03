@@ -8,6 +8,7 @@ import (
 	"github.com/DeprecatedLuar/sat/internal/common"
 	"github.com/DeprecatedLuar/sat/internal/config"
 	"github.com/DeprecatedLuar/sat/internal/manifest"
+	"github.com/DeprecatedLuar/sat/internal/sources"
 )
 
 // Run performs idempotent initialization on every invocation
@@ -46,5 +47,42 @@ func Run() error {
 		}
 	}
 
+	backfillAppImageDesktopEntries()
+
 	return nil
+}
+
+// backfillAppImageDesktopEntries generates desktop entries for AppImages
+// installed before desktop-entry generation existed (or installed while
+// unsquashfs was unavailable). Idempotent and local-only: skips any tool
+// that already has an entry or has been marked permanently skippable via
+// sources.HasDesktopEntry, so the common case is one cheap stat per
+// installed AppImage.
+func backfillAppImageDesktopEntries() {
+	appimagesDir := common.AppImagesDir()
+	entries, err := os.ReadDir(appimagesDir)
+	if err != nil {
+		return
+	}
+
+	skipDirs := map[string]bool{
+		common.AppImageApplicationsDirName: true,
+		common.AppImageIconsDirName:        true,
+	}
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || skipDirs[name] {
+			continue
+		}
+		if sources.HasDesktopEntry(name) {
+			continue
+		}
+
+		appimagePath := filepath.Join(appimagesDir, name)
+		symlinkPath := filepath.Join(common.LocalBin(), name)
+		repoPath := manifest.GetSourceIdentity(manifest.Get(name))
+
+		sources.InstallDesktopEntry(appimagePath, symlinkPath, name, repoPath)
+	}
 }

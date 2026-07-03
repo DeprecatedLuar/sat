@@ -120,6 +120,8 @@ func AppImageInstall(repoPath string) (binName string, err error) {
 		fmt.Fprintf(os.Stderr, "[debug]   appimage install successful: %s\n", appName)
 	}
 
+	InstallDesktopEntry(appimagePath, symlinkPath, appName, repoPath)
+
 	return appName, nil
 }
 
@@ -128,6 +130,8 @@ func AppImageInstall(repoPath string) (binName string, err error) {
 func AppImageUninstall(pkg, source string) error {
 	symlinkPath := filepath.Join(common.LocalBin(), pkg)
 	appimagePath := filepath.Join(common.AppImagesDir(), pkg)
+
+	removeDesktopEntry(pkg)
 
 	var firstErr error
 	if err := os.Remove(symlinkPath); err != nil && !os.IsNotExist(err) {

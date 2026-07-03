@@ -10,11 +10,12 @@ const (
 	// Status symbols
 	Check = "\033[0;92m✓\033[0m" // Green checkmark
 	Cross = "\033[0;91m✗\033[0m" // Red X
+	Bang  = "\033[0;93m!\033[0m" // Yellow bang
 
 	// Display width constants
-	StatusWidth     = 40  // Width for status messages
-	MessageWidth    = 25  // Width for tool messages
-	ToolNameWidth   = 20  // Width for tool names in list
+	StatusWidth   = 40 // Width for status messages
+	MessageWidth  = 25 // Width for tool messages
+	ToolNameWidth = 20 // Width for tool names in list
 )
 
 // sourceInfo bundles the color, pastel light-color, and display name for a
@@ -101,6 +102,13 @@ func StatusOK(msg, sourceStr string) {
 // StatusFail prints a failure message with cross
 func StatusFail(msg string) {
 	fmt.Printf("\r[%s] %s\n", Cross, msg)
+}
+
+// Warn prints a non-fatal, actionable notice. Unlike [debug]-gated logging,
+// this is always visible since it tells the user how to fix something
+// (e.g. a missing optional dependency), not just what happened internally.
+func Warn(msg string) {
+	fmt.Printf("\r[%s] %s\n", Bang, msg)
 }
 
 // DisplayToolEntry prints a formatted tool entry with optional prefix/suffix
