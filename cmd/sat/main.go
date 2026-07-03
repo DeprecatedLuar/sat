@@ -60,7 +60,10 @@ func main() {
 
 	switch command {
 	case "install":
-		notImplemented("install")
+		if err := commands.Install(commandArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "sat: install failed: %v\n", err)
+			os.Exit(1)
+		}
 	case "search":
 		if err := commands.Search(commandArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "sat: search failed: %v\n", err)

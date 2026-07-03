@@ -26,20 +26,23 @@ const (
 	AliasGithub  = "github"
 	AliasRelease = "release"
 	AliasRel     = "rel"
+	AliasImg     = "img"
 
 	// Source types
-	SourceCargo     = "cargo"
-	SourceUV        = "uv"
-	SourceNPM       = "npm"
-	SourceGo        = "go"
-	SourceBrew      = "brew"
-	SourceNix       = "nix"
-	SourceFlatpak   = "flatpak"
-	SourceGH        = "gh"
-	SourceGHRelease = "gh-release"
-	SourceSystem    = "system"
-	SourceAppImage  = "appimage"
-	SourceManual    = "manual"
+	SourceCargo      = "cargo"
+	SourceUV         = "uv"
+	SourceNPM        = "npm"
+	SourceGo         = "go"
+	SourceBrew       = "brew"
+	SourceNix        = "nix"
+	SourceFlatpak    = "flatpak"
+	SourceGH         = "gh"
+	SourceGHRelease  = "gh-release"
+	SourceGHAppImage = "gh-appimage"
+	SourceSystem     = "system"
+	SourceAppImage   = "appimage"
+	SourceSat        = "sat"
+	SourceManual     = "manual"
 
 	// Installation path patterns
 	PathCargo1      = "/.cargo/bin/"
@@ -96,6 +99,8 @@ func ParseToolSpec(spec string) (name, source string) {
 		source = SourceGH
 	case AliasRelease, AliasRel:
 		source = SourceGHRelease
+	case AliasImg, SourceAppImage:
+		source = SourceGHAppImage
 	default:
 		source = src
 	}

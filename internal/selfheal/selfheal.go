@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/DeprecatedLuar/sat/internal/common"
+	"github.com/DeprecatedLuar/sat/internal/config"
 	"github.com/DeprecatedLuar/sat/internal/manifest"
 )
 
@@ -25,6 +26,11 @@ func Run() error {
 	// Ensure OS info cache exists
 	if err := common.EnsureOSInfo(); err != nil {
 		return fmt.Errorf("failed to ensure OS info: %w", err)
+	}
+
+	// Ensure config.toml exists with defaults
+	if err := config.EnsureDefault(); err != nil {
+		return fmt.Errorf("failed to ensure config: %w", err)
 	}
 
 	// Ensure directory structure
