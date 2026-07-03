@@ -61,7 +61,10 @@ func main() {
 	case "install":
 		notImplemented("install")
 	case "search":
-		notImplemented("search")
+		if err := commands.Search(commandArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "sat: search failed: %v\n", err)
+			os.Exit(1)
+		}
 	case "uninstall":
 		notImplemented("uninstall")
 	case "shell":

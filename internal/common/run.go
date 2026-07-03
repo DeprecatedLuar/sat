@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
+	"syscall"
+	"unsafe"
 )
 
 const (
@@ -31,14 +34,25 @@ func RunQuiet(name string, args ...string) error {
 	return cmd.Run()
 }
 
-// FetchJSON fetches JSON data from a URL
+// FetchJSON fetches JSON data from a URL with proper headers
 // debugCtx is used for debug logging context (e.g., "GitHub API: /repos/...")
 func FetchJSON(url, debugCtx string) ([]byte, error) {
 	if os.Getenv(EnvSATDebug) != "" && debugCtx != "" {
 		fmt.Fprintf(os.Stderr, "%s %s: %s\n", DebugPrefix, debugCtx, url)
 	}
 
-	resp, err := http.Get(url)
+	// Create request with proper User-Agent header
+	// Many APIs (like crates.io) require a User-Agent or block requests
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set User-Agent to mimic curl
+	req.Header.Set("User-Agent", "sat/1.0 (https://github.com/DeprecatedLuar/sat)")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http request failed: %w", err)
 	}
@@ -54,4 +68,41 @@ func FetchJSON(url, debugCtx string) ([]byte, error) {
 	}
 
 	return body, nil
+}
+
+// winsize structure for ioctl
+type winsize struct {
+	Row    uint16
+	Col    uint16
+	Xpixel uint16
+	Ypixel uint16
+}
+
+// GetTerminalWidth returns the terminal width using syscalls
+func GetTerminalWidth() (int, error) {
+	// Try syscall (most reliable)
+	ws := &winsize{}
+	retCode, _, errno := syscall.Syscall(syscall.SYS_IOCTL,
+		uintptr(syscall.Stdout),
+		uintptr(syscall.TIOCGWINSZ),
+		uintptr(unsafe.Pointer(ws)))
+
+	if int(retCode) == 0 && ws.Col > 0 {
+		return int(ws.Col), nil
+	}
+
+	// Fallback to COLUMNS env var
+	if cols := os.Getenv("COLUMNS"); cols != "" {
+		if width, err := strconv.Atoi(cols); err == nil && width > 0 {
+			return width, nil
+		}
+	}
+
+	// Debug output if detection failed
+	if os.Getenv("SAT_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "[debug] terminal width detection failed (errno: %v), using default 80\n", errno)
+	}
+
+	// Default fallback
+	return 80, nil
 }
