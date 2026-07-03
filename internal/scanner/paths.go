@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/DeprecatedLuar/sat/internal/common"
 )
 
 const (
@@ -16,13 +18,10 @@ const (
 	DefaultCargoHome = ".cargo"
 	DefaultNPMGlobal = ".npm-global"
 	LocalShareDir    = ".local/share"
-	LocalBinDir      = ".local/bin"
 
 	// Subdirectories
-	BinSubdir       = "bin"
-	UVToolsSubdir   = "uv/tools"
-	SATSubdir       = "sat"
-	AppImagesSubdir = "appimages"
+	BinSubdir     = "bin"
+	UVToolsSubdir = "uv/tools"
 
 	// Tool names
 	NPMTool = "npm"
@@ -91,12 +90,12 @@ func UVToolsDir() string {
 
 // AppImagesDir returns the AppImage storage directory
 func AppImagesDir() string {
-	return filepath.Join(os.Getenv(EnvHome), LocalShareDir, SATSubdir, BinSubdir, AppImagesSubdir)
+	return common.AppImagesDir()
 }
 
 // LocalBin returns the ~/.local/bin directory
 func LocalBin() string {
-	return filepath.Join(os.Getenv(EnvHome), LocalBinDir)
+	return common.LocalBin()
 }
 
 // DirExists checks if a directory exists
@@ -113,5 +112,5 @@ func FileExists(path string) bool {
 
 // IsExecutable checks if a file has executable permissions
 func IsExecutable(info os.FileInfo) bool {
-	return info.Mode()&0111 != 0
+	return info.Mode()&ExecutableMask != 0
 }

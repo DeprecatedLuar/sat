@@ -17,108 +17,73 @@ const (
 	ToolNameWidth   = 20  // Width for tool names in list
 )
 
+// sourceInfo bundles the color, pastel light-color, and display name for a
+// source type, so the three can't drift out of sync the way three parallel
+// switch statements did (SourceLight was missing the "unknown" case that
+// SourceColor had).
+type sourceInfo struct {
+	color   string
+	light   string
+	display string
+}
+
+// sourceTable maps every known source-type alias to its display info.
+// Multiple keys intentionally share the same sourceInfo value (e.g.
+// "cargo"/"rust" are aliases for the same ecosystem).
+var sourceTable = buildSourceTable()
+
+func buildSourceTable() map[string]sourceInfo {
+	groups := []struct {
+		aliases []string
+		info    sourceInfo
+	}{
+		{[]string{"cargo", "rust"}, sourceInfo{Rust, RustLight, "rust"}},
+		{[]string{"npm", "node"}, sourceInfo{Node, NodeLight, "node"}},
+		{[]string{"uv", "pip", "python"}, sourceInfo{Python, PythonLight, "python"}},
+		{[]string{"apt", "apk", "pacman", "dnf", "pkg", "system"}, sourceInfo{System, SystemLight, "system"}},
+		{[]string{"flatpak", "flathub"}, sourceInfo{Flatpak, FlatpakLight, "flatpak"}},
+		{[]string{"github", "gh"}, sourceInfo{Repo, RepoLight, "github"}},
+		{[]string{"appimage"}, sourceInfo{AppImage, AppImageLight, "appimage"}},
+		{[]string{"sat"}, sourceInfo{Sat, Sat, "sat"}}, // no light variant defined, falls back to Sat
+		{[]string{"go"}, sourceInfo{Go, GoLight, "go"}},
+		{[]string{"brew"}, sourceInfo{Brew, BrewLight, "brew"}},
+		{[]string{"nix", "nixos"}, sourceInfo{Nix, NixLight, "nix"}},
+		{[]string{"manual"}, sourceInfo{Manual, ManualLight, "manual"}},
+		{[]string{"unknown"}, sourceInfo{Dim, Reset, "unknown"}},
+	}
+
+	table := make(map[string]sourceInfo)
+	for _, g := range groups {
+		for _, alias := range g.aliases {
+			table[alias] = g.info
+		}
+	}
+	return table
+}
+
 // SourceColor returns the ANSI color code for a source string
 func SourceColor(sourceStr string) string {
-	sourceType := manifest.GetSourceType(sourceStr)
-
-	switch sourceType {
-	case "cargo", "rust":
-		return Rust
-	case "npm", "node":
-		return Node
-	case "uv", "pip", "python":
-		return Python
-	case "apt", "apk", "pacman", "dnf", "pkg", "system":
-		return System
-	case "flatpak", "flathub":
-		return Flatpak
-	case "github", "gh":
-		return Repo
-	case "appimage":
-		return AppImage
-	case "sat":
-		return Sat
-	case "go":
-		return Go
-	case "brew":
-		return Brew
-	case "nix", "nixos":
-		return Nix
-	case "manual":
-		return Manual
-	case "unknown":
-		return Dim
-	default:
-		return Reset
+	if info, ok := sourceTable[manifest.GetSourceType(sourceStr)]; ok {
+		return info.color
 	}
+	return Reset
 }
 
 // SourceLight returns the pastel/light color for a source string
 func SourceLight(sourceStr string) string {
-	sourceType := manifest.GetSourceType(sourceStr)
-
-	switch sourceType {
-	case "cargo", "rust":
-		return RustLight
-	case "npm", "node":
-		return NodeLight
-	case "uv", "pip", "python":
-		return PythonLight
-	case "apt", "apk", "pacman", "dnf", "pkg", "system":
-		return SystemLight
-	case "flatpak", "flathub":
-		return FlatpakLight
-	case "github", "gh":
-		return RepoLight
-	case "appimage":
-		return AppImageLight
-	case "sat":
-		return Sat // No light variant defined
-	case "go":
-		return GoLight
-	case "brew":
-		return BrewLight
-	case "nix", "nixos":
-		return NixLight
-	case "manual":
-		return ManualLight
-	default:
-		return Reset
+	if info, ok := sourceTable[manifest.GetSourceType(sourceStr)]; ok {
+		return info.light
 	}
+	return Reset
 }
 
 // SourceDisplay returns the human-friendly display name for a source type
 func SourceDisplay(sourceStr string) string {
 	sourceType := manifest.GetSourceType(sourceStr)
-
-	switch sourceType {
-	case "cargo", "rust":
-		return "rust"
-	case "npm", "node":
-		return "node"
-	case "uv", "pip", "python":
-		return "python"
-	case "apt", "apk", "pacman", "dnf", "pkg":
-		return "system"
-	case "flatpak", "flathub":
-		return "flatpak"
-	case "github", "gh":
-		return "github"
-	case "appimage":
-		return "appimage"
-	case "sat":
-		return "sat"
-	case "go":
-		return "go"
-	case "brew":
-		return "brew"
-	case "nix", "nixos":
-		return "nix"
-	case "manual":
-		return "manual"
-	default:
-		return sourceType
+	if info, ok := sourceTable[sourceType]; ok {
+		return info.display
 	}
+	return sourceType
 }
 
 // Status prints a simple status message

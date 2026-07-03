@@ -38,8 +38,59 @@ func EnsureManifest(path string) error {
 	return nil
 }
 
+// entry is a single tool=source manifest line, kept in file order
+type entry struct {
+	tool   string
+	source string
+}
+
+// readEntries reads the manifest file into an ordered slice of entries.
+// Missing files are treated as empty (no entries), matching prior Get/Has behavior.
+func readEntries(path string) ([]entry, error) {
+	file, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var entries []entry
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, CommentPrefix) {
+			continue
+		}
+		parts := strings.SplitN(line, ManifestDelimiter, ManifestFieldCount)
+		if len(parts) == ManifestFieldCount {
+			entries = append(entries, entry{tool: parts[0], source: parts[1]})
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+// writeEntries writes entries to the manifest file in the given order
+func writeEntries(path string, entries []entry) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	for _, e := range entries {
+		fmt.Fprintf(f, "%s%s%s\n", e.tool, ManifestDelimiter, e.source)
+	}
+	return nil
+}
+
 // Add adds a tool to the system manifest
 // Format: tool=source:identity:version
+// Existing tools are updated in place (position preserved); new tools are appended.
 func Add(tool, source string) error {
 	manifestMutex.Lock()
 	defer manifestMutex.Unlock()
@@ -49,30 +100,24 @@ func Add(tool, source string) error {
 		return err
 	}
 
-	// Read existing entries
-	entries := make(map[string]string)
-	file, err := os.Open(path)
+	entries, err := readEntries(path)
 	if err != nil {
 		return err
 	}
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, CommentPrefix) {
-			continue
-		}
-		parts := strings.SplitN(line, ManifestDelimiter, ManifestFieldCount)
-		if len(parts) == ManifestFieldCount {
-			entries[parts[0]] = parts[1]
+
+	found := false
+	for i := range entries {
+		if entries[i].tool == tool {
+			entries[i].source = source
+			found = true
+			break
 		}
 	}
-	file.Close()
+	if !found {
+		entries = append(entries, entry{tool: tool, source: source})
+	}
 
-	// Add/update entry
-	entries[tool] = source
-
-	// Write back
-	return writeManifest(path, entries)
+	return writeEntries(path, entries)
 }
 
 // Get retrieves the source string for a tool
@@ -80,19 +125,13 @@ func Get(tool string) string {
 	manifestMutex.Lock()
 	defer manifestMutex.Unlock()
 
-	path := ManifestPath()
-	file, err := os.Open(path)
+	entries, err := readEntries(ManifestPath())
 	if err != nil {
 		return ""
 	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		parts := strings.SplitN(line, ManifestDelimiter, ManifestFieldCount)
-		if len(parts) == ManifestFieldCount && parts[0] == tool {
-			return parts[1]
+	for _, e := range entries {
+		if e.tool == tool {
+			return e.source
 		}
 	}
 	return ""
@@ -109,39 +148,17 @@ func Remove(tool string) error {
 	defer manifestMutex.Unlock()
 
 	path := ManifestPath()
-	file, err := os.Open(path)
+	entries, err := readEntries(path)
 	if err != nil {
 		return err
 	}
 
-	entries := make(map[string]string)
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, CommentPrefix) {
-			continue
-		}
-		parts := strings.SplitN(line, ManifestDelimiter, ManifestFieldCount)
-		if len(parts) == ManifestFieldCount {
-			entries[parts[0]] = parts[1]
+	filtered := entries[:0]
+	for _, e := range entries {
+		if e.tool != tool {
+			filtered = append(filtered, e)
 		}
 	}
-	file.Close()
 
-	delete(entries, tool)
-	return writeManifest(path, entries)
-}
-
-// writeManifest writes entries to manifest file
-func writeManifest(path string, entries map[string]string) error {
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	for tool, source := range entries {
-		fmt.Fprintf(f, "%s%s%s\n", tool, ManifestDelimiter, source)
-	}
-	return nil
+	return writeEntries(path, filtered)
 }

@@ -11,10 +11,6 @@ const (
 	// Search result limits
 	MaxSearchResults = 30
 
-	// Debug output
-	DebugPrefix = "[debug]"
-	EnvSATDebug = "SAT_DEBUG"
-
 	// Package manager names (used for routing)
 	PkgMgrAPT     = "apt"
 	PkgMgrPacman  = "pacman"
@@ -178,7 +174,7 @@ func SystemScan() ([]Package, error) {
 
 // Debug helper
 func init() {
-	if os.Getenv(EnvSATDebug) != "" {
-		fmt.Fprintf(os.Stderr, "%s system source module loaded\n", DebugPrefix)
+	if os.Getenv(common.EnvSATDebug) != "" {
+		fmt.Fprintf(os.Stderr, "%s system source module loaded\n", common.DebugPrefix)
 	}
 }

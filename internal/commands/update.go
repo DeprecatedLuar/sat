@@ -22,7 +22,5 @@ func HandleUpdate(args []string, version, repo string) error {
 func updatePackages(args []string) error {
 	// TODO: Implement package update logic
 	// This will call source-specific update functions based on manifest entries
-	fmt.Println("Package updates not yet implemented")
-	fmt.Printf("Would update: %v\n", args)
-	return nil
+	return fmt.Errorf("package updates not yet implemented (would update: %v)", args)
 }

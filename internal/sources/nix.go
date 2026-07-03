@@ -14,6 +14,13 @@ import (
 	"github.com/DeprecatedLuar/sat/internal/manifest"
 )
 
+// nixOSSearchURL is the NixOS package search backend used by search.nixos.org
+// itself (its frontend queries this Elasticsearch/Bonsai cluster directly).
+// The embedded credential is a fixed, publicly-known read-only key shared by
+// every NixOS search client, not a project secret — bash's lib/sources/nix.sh
+// uses the identical URL.
+const nixOSSearchURL = "https://aWVSALXpZv:X8gPHnzL52wFEekuxsfQ9cSh@nixos-search-7-1733963800.us-east-1.bonsaisearch.net/latest-*/_search"
+
 // NixOS search API response structures
 type nixSearchResponse struct {
 	Hits struct {
@@ -191,8 +198,7 @@ func NixCheckOutdated(tool string, sourceType string) (current, latest string, e
 
 // NixSearch searches NixOS packages
 func NixSearch(query string) ([]string, error) {
-	// NixOS search API URL
-	url := "https://aWVSALXpZv:X8gPHnzL52wFEekuxsfQ9cSh@nixos-search-7-1733963800.us-east-1.bonsaisearch.net/latest-*/_search"
+	url := nixOSSearchURL
 
 	// Build search payload
 	payload := map[string]interface{}{

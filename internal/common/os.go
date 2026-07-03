@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/DeprecatedLuar/sat/internal/manifest"
 )
@@ -52,16 +53,29 @@ const (
 	DistroFamilyNixOS  = "nixos"
 )
 
-// OS info cache structure
+// OS info cache structure. Populated once via EnsureOSInfo (guarded by
+// osInfoOnce), then only ever read — safe for concurrent readers (e.g. the
+// goroutines search.go dispatches per source) without per-access locking.
 var (
 	osType       string
 	distro       string
 	distroFamily string
 	pkgManager   string
+
+	osInfoOnce sync.Once
+	osInfoErr  error
 )
 
-// EnsureOSInfo loads or creates the OS detection cache
+// EnsureOSInfo loads or creates the OS detection cache. Safe to call from
+// multiple goroutines; detection runs exactly once.
 func EnsureOSInfo() error {
+	osInfoOnce.Do(func() {
+		osInfoErr = ensureOSInfo()
+	})
+	return osInfoErr
+}
+
+func ensureOSInfo() error {
 	cacheFile := filepath.Join(manifest.DataDir(), OSCacheFile)
 
 	// Try to load from cache
@@ -89,14 +103,14 @@ func loadOSCache(path string) error {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, CacheVarOSType) {
-			osType = strings.TrimPrefix(line, CacheVarOSType)
-		} else if strings.HasPrefix(line, CacheVarDistro) {
-			distro = strings.TrimPrefix(line, CacheVarDistro)
-		} else if strings.HasPrefix(line, CacheVarDistroFamily) {
-			distroFamily = strings.TrimPrefix(line, CacheVarDistroFamily)
-		} else if strings.HasPrefix(line, CacheVarPkgManager) {
-			pkgManager = strings.TrimPrefix(line, CacheVarPkgManager)
+		if v, ok := strings.CutPrefix(line, CacheVarOSType); ok {
+			osType = v
+		} else if v, ok := strings.CutPrefix(line, CacheVarDistro); ok {
+			distro = v
+		} else if v, ok := strings.CutPrefix(line, CacheVarDistroFamily); ok {
+			distroFamily = v
+		} else if v, ok := strings.CutPrefix(line, CacheVarPkgManager); ok {
+			pkgManager = v
 		}
 	}
 
@@ -118,10 +132,10 @@ func detectOS() error {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.HasPrefix(line, OSReleaseID) {
-			id = strings.Trim(strings.TrimPrefix(line, OSReleaseID), `"`)
-		} else if strings.HasPrefix(line, OSReleaseIDLike) {
-			idLike = strings.Trim(strings.TrimPrefix(line, OSReleaseIDLike), `"`)
+		if v, ok := strings.CutPrefix(line, OSReleaseID); ok {
+			id = strings.Trim(v, `"`)
+		} else if v, ok := strings.CutPrefix(line, OSReleaseIDLike); ok {
+			idLike = strings.Trim(v, `"`)
 		}
 	}
 

@@ -44,9 +44,9 @@ func ScanAll() (*ScanResult, error) {
 	result.Added += scanDir("go", GoBinDir())
 
 	// Special ecosystem scans
-	result.Added += scanEcosystem(ScanFlatpak)
-	result.Added += scanEcosystem(ScanAppImages)
-	result.Added += scanEcosystem(ScanLocalBin)
+	result.Added += scanSource(ScanFlatpak)
+	result.Added += scanSource(ScanAppImages)
+	result.Added += scanSource(ScanLocalBin)
 
 	// Clean up AFTER scanning (removes exclusions, brew deps, stale unknowns)
 	result.Pruned = CleanupManifest()
@@ -54,25 +54,8 @@ func ScanAll() (*ScanResult, error) {
 	return result, nil
 }
 
-// scanSource runs a source's Scan() method and adds packages to manifest
+// scanSource runs a scan function (source adapter or ecosystem scanner) and adds packages to manifest
 func scanSource(scanFunc func() ([]sources.Package, error)) int {
-	packages, err := scanFunc()
-	if err != nil || packages == nil {
-		return 0
-	}
-
-	added := 0
-	for _, pkg := range packages {
-		if tryAddPackage(pkg) {
-			added++
-		}
-	}
-
-	return added
-}
-
-// scanEcosystem runs an ecosystem scanner and adds packages to manifest
-func scanEcosystem(scanFunc func() ([]sources.Package, error)) int {
 	packages, err := scanFunc()
 	if err != nil || packages == nil {
 		return 0

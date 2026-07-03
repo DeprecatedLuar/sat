@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/DeprecatedLuar/sat/internal/common"
@@ -22,6 +23,32 @@ const (
 	// Executable permission mask
 	ExecutableMask = 0111
 )
+
+// appImageZsyncPattern matches the embedded zsync self-update string that
+// linuxdeploy/appimagetool write into many AppImages (owner|repo, capped to
+// avoid runaway matches on non-matching binary noise). Mirrors bash's
+// ZSYNC_PATTERN grep -oP 'gh-releases-zsync\|\K[^|]+\|[^|]+'
+// (lib/commands/scan.sh:25,238-248), using capture groups instead of \K
+// since Go's regexp (RE2) has no lookbehind support.
+var appImageZsyncPattern = regexp.MustCompile(`gh-releases-zsync\|([^|\x00]{1,100})\|([^|\x00]{1,200})`)
+
+// extractAppImageRepo recovers an "owner/repo" identity from an AppImage
+// binary that sat did not itself install, by searching for the embedded
+// zsync update string. Returns "" if the AppImage doesn't embed one -
+// this is a best-effort mechanism, not every AppImage carries it.
+func extractAppImageRepo(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+
+	m := appImageZsyncPattern.FindSubmatch(data)
+	if m == nil {
+		return ""
+	}
+
+	return string(m[1]) + "/" + string(m[2])
+}
 
 // ScanDir scans a directory for binaries from a specific source
 // Returns a list of found packages
@@ -119,11 +146,11 @@ func ScanAppImages() ([]sources.Package, error) {
 		}
 
 		prog := entry.Name()
-		// TODO: Extract GitHub repo from AppImage (Phase 6)
+		identity := extractAppImageRepo(filepath.Join(appimageDir, prog))
 		packages = append(packages, sources.Package{
 			Name:     prog,
 			Source:   SourceAppImage,
-			Identity: "",
+			Identity: identity,
 			Version:  "",
 		})
 	}
@@ -199,11 +226,11 @@ func GetVersionForSource(prog, sourceType, identity string) string {
 		return sources.NixOSGetVersion(prog)
 	case "apt", "pacman", "apk", "dnf", "system":
 		return sources.GetVersion(prog)
-	// TODO: Add more sources as they're implemented in later phases
-	// case "npm": return sources.NPMGetVersion(prog)
-	// case "uv": return sources.UVGetVersion(prog)
-	// case "go": return sources.GoGetVersion(prog)
-	// case "flatpak": return sources.FlatpakGetVersion(identity)
+		// TODO: Add more sources as they're implemented in later phases
+		// case "npm": return sources.NPMGetVersion(prog)
+		// case "uv": return sources.UVGetVersion(prog)
+		// case "go": return sources.GoGetVersion(prog)
+		// case "flatpak": return sources.FlatpakGetVersion(identity)
 	}
 	return ""
 }

@@ -58,7 +58,7 @@ internal/
     system.go              # Distro package managers (pacman, apt, dnf, apk)
     cargo.go               # Rust crates.io
     npm.go                 # Node packages
-    uv.go                  # Python via uv
+    pypi.go                # PyPI search (uv install/uninstall/update not yet ported, see lib/sources/uv.sh)
     goinstall.go           # Go packages
     brew.go                # Homebrew
     nix.go                 # Nix packages
@@ -93,7 +93,7 @@ internal/
 **Key Go design decisions:**
 - Manual CLI routing (no cobra) for simplicity and startup performance
 - Context-aware manifest routing via `SAT_MANIFEST_TARGET` env var (same as bash)
-- Source interface: Install/Uninstall/Update/GetVersion/QueryLatestVersion/CheckOutdated/Search
+- Source contract (free functions per source, e.g. `CargoInstall`/`AptSearch`, dispatched via `switch` in `commands/`): a required core (`Install`/`Uninstall`/`GetVersion`) present on nearly every source, plus optional per-source capabilities (`Search`, `QueryLatestVersion`, `CheckOutdated`, `Update`) that not all sources implement — mirrors bash, where e.g. `query_latest_version_X` only exists for sources with a cheap pre-install registry lookup (npm/cargo/uv/brew/github), and `search_X` doesn't exist for appimage/go/sat since they aren't independently discoverable registries. Not every source needs every method; dispatch sites only call what a given source actually has.
 - Parallel search via goroutines + sync.WaitGroup
 - No daemon/background process - all commands are synchronous
 - XDG paths with `SAT_DATA` override for testing
@@ -451,7 +451,7 @@ done
 **Critical constraints:**
 - Import order: `manifest` → `pkg/ui` → `internal/common` → `sources` → `commands` (no circular deps)
 - Manifest operations MUST go through `internal/manifest` package (single source of truth)
-- Source modules implement standard interface (Install/Uninstall/Update/GetVersion/QueryLatestVersion/CheckOutdated/Search)
+- Source modules implement a required core (Install/Uninstall/GetVersion) plus whichever optional capabilities apply to that source (Search/QueryLatestVersion/CheckOutdated/Update) — not a uniform 7-method interface; partial coverage is intentional per source, matching bash
 - Display helpers in `pkg/ui` parse source strings via `manifest.GetSourceType` (never duplicate parsing)
 - Debug output to stderr with `[debug]` prefix when `SAT_DEBUG` set
 - Use `RunQuiet()` for suppressed output (visible in debug mode)

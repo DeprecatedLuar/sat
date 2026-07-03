@@ -8,7 +8,7 @@ import (
 
 const (
 	// Tool spec parsing
-	ToolSpecDelimiter = ":"
+	ToolSpecDelimiter  = ":"
 	ToolSpecFieldCount = 2
 
 	// Source type aliases
@@ -28,18 +28,18 @@ const (
 	AliasRel     = "rel"
 
 	// Source types
-	SourceCargo   = "cargo"
-	SourceUV      = "uv"
-	SourceNPM     = "npm"
-	SourceGo      = "go"
-	SourceBrew    = "brew"
-	SourceNix     = "nix"
-	SourceFlatpak = "flatpak"
-	SourceGH      = "gh"
+	SourceCargo     = "cargo"
+	SourceUV        = "uv"
+	SourceNPM       = "npm"
+	SourceGo        = "go"
+	SourceBrew      = "brew"
+	SourceNix       = "nix"
+	SourceFlatpak   = "flatpak"
+	SourceGH        = "gh"
 	SourceGHRelease = "gh-release"
-	SourceSystem  = "system"
-	SourceAppImage = "appimage"
-	SourceManual  = "manual"
+	SourceSystem    = "system"
+	SourceAppImage  = "appimage"
+	SourceManual    = "manual"
 
 	// Installation path patterns
 	PathCargo1      = "/.cargo/bin/"
@@ -57,7 +57,6 @@ const (
 	PathNix1        = "/.nix-profile/"
 	PathNix2        = "/nix/store/"
 	PathFlatpak     = "/flatpak/"
-	PathAppImage    = "/.local/share/sat/bin/appimages/"
 	PathUsrBin      = "/usr/bin/"
 	PathUsrLocalBin = "/usr/local/bin/"
 	PathBin         = "/bin/"
@@ -148,7 +147,7 @@ func DetectSource(tool string) string {
 	case strings.Contains(realPath, PathFlatpak):
 		return SourceFlatpak
 
-	case strings.Contains(realPath, PathAppImage):
+	case strings.Contains(realPath, AppImagesDir()):
 		return SourceAppImage
 
 	case strings.HasPrefix(realPath, PathUsrBin),

@@ -99,8 +99,8 @@ func GetTerminalWidth() (int, error) {
 	}
 
 	// Debug output if detection failed
-	if os.Getenv("SAT_DEBUG") != "" {
-		fmt.Fprintf(os.Stderr, "[debug] terminal width detection failed (errno: %v), using default 80\n", errno)
+	if os.Getenv(EnvSATDebug) != "" {
+		fmt.Fprintf(os.Stderr, "%s terminal width detection failed (errno: %v), using default 80\n", DebugPrefix, errno)
 	}
 
 	// Default fallback

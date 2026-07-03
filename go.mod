@@ -1,3 +1,12 @@
 module github.com/DeprecatedLuar/sat
 
 go 1.22
+
+require github.com/DeprecatedLuar/gohelp-luar v0.0.0
+
+require (
+	golang.org/x/sys v0.28.0 // indirect
+	golang.org/x/term v0.27.0 // indirect
+)
+
+replace github.com/DeprecatedLuar/gohelp-luar => ../gohelp-luar

@@ -95,6 +95,26 @@ func ApkSearch(query string) ([]string, error) {
 	return results, nil
 }
 
+// apkOwnerOf resolves the package owning a binary, via `apk info --who-owns`
+func apkOwnerOf(binPath string) string {
+	var output bytes.Buffer
+	cmd := exec.Command("apk", "info", "--who-owns", binPath)
+	cmd.Stdout = &output
+	cmd.Stderr = nil
+
+	if cmd.Run() != nil {
+		return ""
+	}
+
+	fields := strings.Fields(strings.TrimSpace(output.String()))
+	if len(fields) == 0 {
+		return ""
+	}
+
+	// Strip version: package-1.2.3 → package
+	return strings.Split(fields[len(fields)-1], "-")[0]
+}
+
 // ApkScan scans explicitly-installed Alpine packages
 func ApkScan() ([]Package, error) {
 	// Read /etc/apk/world for explicitly-installed packages
@@ -115,58 +135,6 @@ func ApkScan() ([]Package, error) {
 		return nil, nil
 	}
 
-	var packages []Package
 	binDirs := []string{"/usr/bin", "/usr/local/bin", "/bin"}
-
-	for _, binDir := range binDirs {
-		entries, err := os.ReadDir(binDir)
-		if err != nil {
-			continue
-		}
-
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-
-			binPath := binDir + "/" + entry.Name()
-			info, err := entry.Info()
-			if err != nil || info.Mode()&0111 == 0 {
-				continue
-			}
-
-			// Find which package owns this binary
-			var pkgOutput bytes.Buffer
-			pkgCmd := exec.Command("apk", "info", "--who-owns", binPath)
-			pkgCmd.Stdout = &pkgOutput
-			pkgCmd.Stderr = nil
-
-			if pkgCmd.Run() != nil {
-				continue
-			}
-
-			// Parse output and strip version
-			output := strings.TrimSpace(pkgOutput.String())
-			fields := strings.Fields(output)
-			if len(fields) == 0 {
-				continue
-			}
-
-			pkgName := fields[len(fields)-1]
-			// Strip version: package-1.2.3 → package
-			pkgName = strings.Split(pkgName, "-")[0]
-
-			if worldPackages[pkgName] {
-				version := ApkGetVersion(entry.Name())
-				packages = append(packages, Package{
-					Name:     entry.Name(),
-					Source:   "apk",
-					Identity: "",
-					Version:  version,
-				})
-			}
-		}
-	}
-
-	return packages, nil
+	return scanBinDirsOwnedBy(binDirs, "apk", worldPackages, apkOwnerOf, ApkGetVersion), nil
 }

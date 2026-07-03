@@ -3,7 +3,6 @@ package sources
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 
@@ -108,6 +107,21 @@ func DnfSearch(query string) ([]string, error) {
 	return results, nil
 }
 
+// dnfOwnerOf resolves the package owning a binary, via `rpm -qf`
+func dnfOwnerOf(binPath string) string {
+	var output bytes.Buffer
+	cmd := exec.Command("rpm", "-qf", binPath)
+	cmd.Stdout = &output
+	cmd.Stderr = nil
+
+	if cmd.Run() != nil {
+		return ""
+	}
+
+	// Strip version: package-1.2.3-4.fc36 → package
+	return strings.Split(strings.TrimSpace(output.String()), "-")[0]
+}
+
 // DnfScan scans user-installed Fedora/RHEL packages
 func DnfScan() ([]Package, error) {
 	// Get user-installed packages
@@ -134,51 +148,6 @@ func DnfScan() ([]Package, error) {
 		return nil, nil
 	}
 
-	var packages []Package
 	binDirs := []string{"/usr/bin", "/usr/local/bin"}
-
-	for _, binDir := range binDirs {
-		entries, err := os.ReadDir(binDir)
-		if err != nil {
-			continue
-		}
-
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-
-			binPath := binDir + "/" + entry.Name()
-			info, err := entry.Info()
-			if err != nil || info.Mode()&0111 == 0 {
-				continue
-			}
-
-			// Find which package owns this binary
-			var pkgOutput bytes.Buffer
-			pkgCmd := exec.Command("rpm", "-qf", binPath)
-			pkgCmd.Stdout = &pkgOutput
-			pkgCmd.Stderr = nil
-
-			if pkgCmd.Run() != nil {
-				continue
-			}
-
-			// Parse output and strip version
-			pkgLine := strings.TrimSpace(pkgOutput.String())
-			pkgName := strings.Split(pkgLine, "-")[0]
-
-			if userPackages[pkgName] {
-				version := DnfGetVersion(entry.Name())
-				packages = append(packages, Package{
-					Name:     entry.Name(),
-					Source:   "dnf",
-					Identity: "",
-					Version:  version,
-				})
-			}
-		}
-	}
-
-	return packages, nil
+	return scanBinDirsOwnedBy(binDirs, "dnf", userPackages, dnfOwnerOf, DnfGetVersion), nil
 }
