@@ -5,7 +5,7 @@ dist/
 build/
 _*
 !__*
-
+!*/
 !*.*
 
 # Dependencies
