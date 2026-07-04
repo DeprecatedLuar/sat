@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -130,11 +131,27 @@ func installForced(tool, source string) {
 	})
 
 	if err != nil {
-		ui.StatusFail(fmt.Sprintf("%s not found in %s", tool, ui.SourceDisplay(source)))
+		if !reportIfAmbiguous(err) {
+			ui.StatusFail(fmt.Sprintf("%s not found in %s: %s", tool, ui.SourceDisplay(source), err))
+		}
 		return
 	}
 
 	finishInstall(result)
+}
+
+// reportIfAmbiguous prints and reports whether err is an
+// AmbiguousMatchError - a short tool name matching more than one GitHub
+// repository. This is not a "try the next source" failure: the ambiguity
+// is independent of which source was being tried, so callers should stop
+// the whole install attempt for this spec instead of falling back.
+func reportIfAmbiguous(err error) bool {
+	var ambig *sources.AmbiguousMatchError
+	if errors.As(err, &ambig) {
+		ui.StatusFail(ambig.Error())
+		return true
+	}
+	return false
 }
 
 // installFallback tries each source in the configured install order,
@@ -144,6 +161,9 @@ func installFallback(tool string) {
 	if err != nil && os.Getenv(common.EnvSATDebug) != "" {
 		fmt.Fprintf(os.Stderr, "%s failed to load config: %v\n", common.DebugPrefix, err)
 	}
+
+	var lastSource string
+	var lastErr error
 
 	for _, source := range cfg.InstallOrder {
 		if os.Getenv(common.EnvSATDebug) != "" {
@@ -157,6 +177,10 @@ func installFallback(tool string) {
 			return err
 		})
 		if err != nil {
+			if reportIfAmbiguous(err) {
+				return
+			}
+			lastSource, lastErr = source, err
 			continue
 		}
 
@@ -164,6 +188,10 @@ func installFallback(tool string) {
 		return
 	}
 
+	if lastErr != nil {
+		ui.StatusFail(fmt.Sprintf("%s not found (%s: %s)", tool, ui.SourceDisplay(lastSource), lastErr))
+		return
+	}
 	ui.StatusFail(fmt.Sprintf("%s not found", tool))
 }
 

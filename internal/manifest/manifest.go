@@ -142,6 +142,29 @@ func Has(tool string) bool {
 	return Get(tool) != ""
 }
 
+// Entry is a single tool=source manifest record, in file order
+type Entry struct {
+	Tool   string
+	Source string
+}
+
+// All returns every entry in the system manifest, in file order
+func All() ([]Entry, error) {
+	manifestMutex.Lock()
+	defer manifestMutex.Unlock()
+
+	raw, err := readEntries(ManifestPath())
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]Entry, len(raw))
+	for i, e := range raw {
+		entries[i] = Entry{Tool: e.tool, Source: e.source}
+	}
+	return entries, nil
+}
+
 // Remove removes a tool from the manifest
 func Remove(tool string) error {
 	manifestMutex.Lock()

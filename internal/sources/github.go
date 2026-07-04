@@ -18,6 +18,11 @@ import (
 // by GitHubUninstall's best-effort symlink cleanup.
 const huberBinDirRel = ".huber/bin"
 
+// AmbiguousMatchError is re-exported so callers outside this package (e.g.
+// commands.Install) can detect an ambiguous short-name match via errors.As
+// without importing the github subpackage directly.
+type AmbiguousMatchError = github.AmbiguousMatchError
+
 // GitHubInstall resolves input (an "owner/repo" path, or a short name to
 // search for) and installs it via the given method. method is one of
 // "auto" (try huber, then appimage, then language-routed go/python),
@@ -62,6 +67,10 @@ func GitHubInstall(input, method string) (binName, srcString string, err error) 
 	}
 }
 
+// githubInstallAuto tries every install method in order and, if all fail,
+// returns one concise reason instead of whichever method happened to run
+// last (which could be a confusing non-sequitur, e.g. "not a python
+// project" for a plain C repo).
 func githubInstallAuto(repo, lang string, tree []string) (binName, srcString string, err error) {
 	if bin, src, err := github.InstallHuber(repo); err == nil {
 		return bin, src, nil
@@ -73,15 +82,23 @@ func githubInstallAuto(repo, lang string, tree []string) (binName, srcString str
 
 	switch lang {
 	case "Go":
-		return github.InstallGo(repo, tree)
+		if bin, src, err := github.InstallGo(repo, tree); err == nil {
+			return bin, src, nil
+		}
 	case "Python":
-		return github.InstallPython(repo, tree)
+		if bin, src, err := github.InstallPython(repo, tree); err == nil {
+			return bin, src, nil
+		}
 	default:
 		if bin, src, err := github.InstallGo(repo, tree); err == nil {
 			return bin, src, nil
 		}
-		return github.InstallPython(repo, tree)
+		if bin, src, err := github.InstallPython(repo, tree); err == nil {
+			return bin, src, nil
+		}
 	}
+
+	return "", "", fmt.Errorf("no binary, AppImage, Go, or Python entrypoint for %s", repo)
 }
 
 // GitHubSearch searches GitHub repositories, formatted for display.

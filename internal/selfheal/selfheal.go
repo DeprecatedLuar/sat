@@ -83,6 +83,6 @@ func backfillAppImageDesktopEntries() {
 		symlinkPath := filepath.Join(common.LocalBin(), name)
 		repoPath := manifest.GetSourceIdentity(manifest.Get(name))
 
-		sources.InstallDesktopEntry(appimagePath, symlinkPath, name, repoPath)
+		sources.InstallDesktopEntry(appimagePath, symlinkPath, name, repoPath, false)
 	}
 }

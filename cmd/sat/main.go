@@ -59,7 +59,7 @@ func main() {
 	_ = commandArgs
 
 	switch command {
-	case "install":
+	case "install", "i":
 		if err := commands.Install(commandArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "sat: install failed: %v\n", err)
 			os.Exit(1)
@@ -69,12 +69,18 @@ func main() {
 			fmt.Fprintf(os.Stderr, "sat: search failed: %v\n", err)
 			os.Exit(1)
 		}
-	case "uninstall":
-		notImplemented("uninstall")
+	case "uninstall", "remove", "rm":
+		if err := commands.Uninstall(commandArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "sat: uninstall failed: %v\n", err)
+			os.Exit(1)
+		}
 	case "shell":
 		notImplemented("shell")
-	case "list":
-		notImplemented("list")
+	case "list", "ls":
+		if err := commands.List(commandArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "sat: list failed: %v\n", err)
+			os.Exit(1)
+		}
 	case "track":
 		notImplemented("track")
 	case "untrack":
@@ -96,15 +102,15 @@ func main() {
 			fmt.Fprintf(os.Stderr, "sat: %v\n", err)
 			os.Exit(1)
 		}
-	case "info":
+	case "info", "which", "whereis":
 		notImplemented("info")
 	case "clone":
 		notImplemented("clone")
 	case "pull":
 		notImplemented("pull")
-	case "deps":
+	case "deps", "dependencies":
 		notImplemented("deps")
-	case "source":
+	case "source", "src":
 		notImplemented("source")
 	case "version":
 		fmt.Println("sat version", version)

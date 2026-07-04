@@ -120,7 +120,7 @@ func AppImageInstall(repoPath string) (binName string, err error) {
 		fmt.Fprintf(os.Stderr, "[debug]   appimage install successful: %s\n", appName)
 	}
 
-	InstallDesktopEntry(appimagePath, symlinkPath, appName, repoPath)
+	InstallDesktopEntry(appimagePath, symlinkPath, appName, repoPath, true)
 
 	return appName, nil
 }

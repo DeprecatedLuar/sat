@@ -10,8 +10,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `sat` is being rewritten from bash (`lib/`) to Go (`cmd/`, `internal/`). **The Go binary is what ships and is committed at `./sat`** — the bash implementation under `lib/` is kept only as a behavioral reference during the port (same manifest format, same fallback semantics) and is not run in production anymore.
 
-Implemented in Go: `install`, `search`, `scan`, `pulverize`, `update`.
-Still stubs (`cmd/sat/main.go` prints "not implemented"): `uninstall`, `shell`, `list`, `track`, `untrack`, `outdated`, `info`, `clone`, `pull`, `deps`, `source`.
+Implemented in Go: `install`, `search`, `scan`, `pulverize`, `update`, `uninstall`/`remove`/`rm`, `list`/`ls`.
+Still stubs (`cmd/sat/main.go` prints "not implemented"): `shell`, `track`, `untrack`, `outdated`, `info`/`which`/`whereis`, `clone`, `pull`, `deps`/`dependencies`, `source`/`src`. `outdated`'s scan logic already exists inside `update.go` but isn't yet exposed as its own read-only command.
 
 See `implementation-plan.md` for the active phase and `implementation-history.md` for what's already landed — check both before assuming a feature is missing or planned a certain way, they're the source of truth over this file.
 

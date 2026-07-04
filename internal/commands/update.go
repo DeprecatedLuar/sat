@@ -1,26 +1,224 @@
 package commands
 
 import (
+	"bufio"
 	"fmt"
+	"os"
+	"sort"
+	"strings"
+	"sync"
+
+	"github.com/DeprecatedLuar/sat/internal/common"
+	"github.com/DeprecatedLuar/sat/internal/manifest"
+	"github.com/DeprecatedLuar/sat/internal/sources"
+	"github.com/DeprecatedLuar/sat/internal/ui"
 )
 
-// HandleUpdate routes between package updates and self-update
-func HandleUpdate(args []string, version, repo string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("Usage: sat update <program> [program2] ...")
-	}
+const updateUsage = "usage: sat update [<tool> ...] [--cargo|--brew|--nix|--apt|--gh|--appimage|--flatpak|--npm|--uv|--go]"
 
-	// Special case: sat update sat
+// updateFlagSource maps a CLI flag to the source type it scopes
+// sat update to (list.go's filterAliases is the read-only List equivalent).
+var updateFlagSource = map[string]string{
+	"--cargo":    common.SourceCargo,
+	"--rust":     common.SourceCargo,
+	"--brew":     common.SourceBrew,
+	"--nix":      common.SourceNix,
+	"--apt":      common.SourceSystem,
+	"--system":   common.SourceSystem,
+	"--sys":      common.SourceSystem,
+	"--gh":       common.SourceGH,
+	"--github":   common.SourceGH,
+	"--appimage": common.SourceAppImage,
+	"--flatpak":  common.SourceFlatpak,
+	"--npm":      common.SourceNPM,
+	"--uv":       common.SourceUV,
+	"--go":       common.SourceGo,
+}
+
+// HandleUpdate routes between self-update, explicit tool updates, and the
+// interactive outdated-scan flow.
+func HandleUpdate(args []string, version, repo string) error {
 	if len(args) == 1 && args[0] == "sat" {
 		return HandleSelfUpdate(version, repo)
 	}
 
-	// Regular package updates (to be implemented in later phases)
-	return updatePackages(args)
+	var tools []string
+	var sourceFilter string
+	for _, arg := range args {
+		if src, ok := updateFlagSource[arg]; ok {
+			sourceFilter = src
+			continue
+		}
+		if strings.HasPrefix(arg, "--") {
+			return fmt.Errorf("unknown flag: %s\n%s", arg, updateUsage)
+		}
+		tools = append(tools, arg)
+	}
+
+	if len(tools) > 0 {
+		for _, tool := range tools {
+			updateOne(tool)
+		}
+		return nil
+	}
+
+	return updateOutdated(sourceFilter)
 }
 
-func updatePackages(args []string) error {
-	// TODO: Implement package update logic
-	// This will call source-specific update functions based on manifest entries
-	return fmt.Errorf("package updates not yet implemented (would update: %v)", args)
+// updateOne updates a single tool via its recorded source, mirroring
+// uninstall.go's removeViaSource dispatch shape.
+func updateOne(tool string) {
+	sourceStr := manifest.Get(tool)
+	if sourceStr == "" {
+		ui.StatusFail(fmt.Sprintf("%s is not tracked by sat", tool))
+		return
+	}
+
+	err := ui.RunWithSpinner(tool, sourceStr, func() error {
+		return updateViaSource(tool, sourceStr)
+	})
+	if err != nil {
+		ui.StatusFail(fmt.Sprintf("%s: %v", tool, err))
+		return
+	}
+
+	ui.StatusOK(fmt.Sprintf("%s updated", tool), sourceStr)
+}
+
+// updateViaSource dispatches to the source-specific update function
+// recorded in the manifest for tool.
+func updateViaSource(tool, sourceStr string) error {
+	sourceType := manifest.GetSourceType(sourceStr)
+	identity := manifest.GetSourceIdentity(sourceStr)
+
+	switch sourceType {
+	case common.SourceCargo, "rust":
+		return sources.CargoUpdate(tool)
+	case common.SourceBrew:
+		return sources.BrewUpdate(tool)
+	case common.SourceNix:
+		return sources.NixUpdate(tool)
+	case "nixos":
+		return fmt.Errorf("declarative NixOS package - update it via your NixOS configuration instead")
+	case "apt", "pacman", "apk", "dnf", common.SourceSystem:
+		return sources.Update(tool)
+	case common.SourceGH, "github":
+		return sources.GitHubUpdate(tool, identity)
+	case common.SourceAppImage:
+		return sources.AppImageUpdate(tool, identity)
+	case common.SourceSat:
+		return fmt.Errorf("use 'sat update sat' to update sat itself")
+	case common.SourceNPM, common.SourceUV, common.SourceGo, common.SourceFlatpak:
+		return fmt.Errorf("%s update not yet implemented in the Go port", ui.SourceDisplay(sourceStr))
+	default:
+		return fmt.Errorf("no automated update for source %q", sourceType)
+	}
+}
+
+// checkOutdated dispatches to the source-specific outdated check for tool.
+// ok is false when the source has no CheckOutdated implementation
+// (npm/flatpak/uv/go, or a non-apt system package manager) or the check
+// itself failed - callers should silently skip these from a bulk scan
+// rather than treat them as errors.
+func checkOutdated(tool, sourceStr string) (current, latest string, ok bool) {
+	sourceType := manifest.GetSourceType(sourceStr)
+	identity := manifest.GetSourceIdentity(sourceStr)
+
+	var err error
+	switch sourceType {
+	case common.SourceCargo, "rust":
+		current, latest, err = sources.CargoCheckOutdated(tool)
+	case common.SourceBrew:
+		current, latest, err = sources.BrewCheckOutdated(tool)
+	case common.SourceNix, "nixos":
+		current, latest, err = sources.NixCheckOutdated(tool, sourceType)
+	case "apt", "pacman", "apk", "dnf", common.SourceSystem:
+		current, latest, err = sources.CheckOutdated(tool)
+	case common.SourceGH, "github":
+		current, latest, err = sources.GitHubCheckOutdated(tool, identity)
+	case common.SourceAppImage:
+		current, latest, err = sources.AppImageCheckOutdated(tool, identity)
+	default:
+		return "", "", false
+	}
+
+	if err != nil || current == "" || latest == "" {
+		return "", "", false
+	}
+	return current, latest, true
+}
+
+// outdatedEntry is one tool found to have a newer version available.
+type outdatedEntry struct {
+	tool, source, current, latest string
+}
+
+// updateOutdated scans the manifest for outdated tools, batched per source
+// type in parallel (mirrors search.go's searchAllSources concurrency
+// shape), prints what's outdated, and offers a single bulk confirmation
+// before updating everything shown. Each source-type group is checked
+// sequentially inside its own goroutine so a source with many tracked
+// tools (e.g. cargo hitting crates.io per package) doesn't burst a remote
+// registry with concurrent requests; only the source types run in parallel.
+func updateOutdated(sourceFilter string) error {
+	entries, err := manifest.All()
+	if err != nil {
+		return err
+	}
+
+	grouped := make(map[string][]manifest.Entry)
+	for _, e := range entries {
+		sourceType := manifest.GetSourceType(e.Source)
+		if sourceFilter != "" && sourceType != sourceFilter {
+			continue
+		}
+		grouped[sourceType] = append(grouped[sourceType], e)
+	}
+
+	var mu sync.Mutex
+	var outdated []outdatedEntry
+	var wg sync.WaitGroup
+
+	for _, group := range grouped {
+		wg.Add(1)
+		go func(group []manifest.Entry) {
+			defer wg.Done()
+			for _, e := range group {
+				current, latest, ok := checkOutdated(e.Tool, e.Source)
+				if !ok || current == latest {
+					continue
+				}
+				mu.Lock()
+				outdated = append(outdated, outdatedEntry{tool: e.Tool, source: e.Source, current: current, latest: latest})
+				mu.Unlock()
+			}
+		}(group)
+	}
+	wg.Wait()
+
+	if len(outdated) == 0 {
+		fmt.Println("Everything up to date")
+		return nil
+	}
+
+	sort.Slice(outdated, func(i, j int) bool { return outdated[i].tool < outdated[j].tool })
+
+	for _, o := range outdated {
+		display := ui.SourceDisplay(o.source)
+		color := ui.SourceColor(o.source)
+		fmt.Printf("  %-*s [%s%s%s] %s -> %s\n", ui.ToolNameWidth, o.tool, color, display, ui.Reset, o.current, o.latest)
+	}
+
+	fmt.Printf("\nUpdate all %d? [y/N] ", len(outdated))
+	reader := bufio.NewReader(os.Stdin)
+	answer, _ := reader.ReadString('\n')
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	if answer != "y" && answer != "yes" {
+		return nil
+	}
+
+	for _, o := range outdated {
+		updateOne(o.tool)
+	}
+	return nil
 }

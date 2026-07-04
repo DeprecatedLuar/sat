@@ -1,18 +1,13 @@
 package github
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
-	"sort"
-	"strconv"
 	"strings"
-
-	"golang.org/x/term"
 )
 
 // githubSearchLimit is the number of candidates fetched per GraphQL
@@ -189,48 +184,69 @@ func SearchBestMatch(query string) (repo, lang string, err error) {
 		return "", "", fmt.Errorf("no GitHub repositories found matching %q", query)
 	}
 
-	chosen := disambiguateCandidates(query, tier)
+	chosen, err := disambiguateCandidates(query, tier)
+	if err != nil {
+		return "", "", err
+	}
 	return chosen.NameWithOwner, chosen.Language, nil
 }
 
-// disambiguateCandidates picks one candidate from a same-confidence tier.
-// A single candidate is returned directly, no prompt. Multiple candidates
-// are ranked by stars (descending); interactively, the user is asked to
-// choose; non-interactively (piped/scripted, stdin isn't a TTY), the
-// top-starred candidate is auto-picked and the alternatives are logged to
-// stderr so scripted use never blocks.
-func disambiguateCandidates(query string, candidates []githubCandidate) githubCandidate {
+// disambiguateCandidates picks the single candidate in a same-confidence
+// tier. A single candidate is returned directly. Multiple candidates fall
+// back to "exactly one has a release" as a tiebreaker, since a repo with no
+// releases can't be installed anyway; if that's still ambiguous (zero or
+// more than one has a release), it returns an AmbiguousMatchError so the
+// caller can tell the user to disambiguate via an explicit "owner/repo".
+func disambiguateCandidates(query string, candidates []githubCandidate) (githubCandidate, error) {
 	if len(candidates) == 1 {
-		return candidates[0]
+		return candidates[0], nil
 	}
 
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].Stars > candidates[j].Stars
-	})
-
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		alts := make([]string, 0, len(candidates)-1)
-		for _, c := range candidates[1:] {
-			alts = append(alts, c.NameWithOwner)
+	var withRelease []githubCandidate
+	for _, c := range candidates {
+		if c.LatestTag != "" {
+			withRelease = append(withRelease, c)
 		}
-		fmt.Fprintf(os.Stderr, "[info] multiple matches for %q, picked %s (%d stars); also matched: %s\n",
-			query, candidates[0].NameWithOwner, candidates[0].Stars, strings.Join(alts, ", "))
-		return candidates[0]
+	}
+	if len(withRelease) == 1 {
+		return withRelease[0], nil
 	}
 
-	fmt.Fprintf(os.Stderr, "Multiple GitHub repositories match %q:\n", query)
+	matches := make([]AmbiguousMatch, len(candidates))
 	for i, c := range candidates {
-		desc := c.Description
-		if desc == "" {
-			desc = "(no description)"
-		}
-		fmt.Fprintf(os.Stderr, "  %d) %s (%d stars) - %s\n", i+1, c.NameWithOwner, c.Stars, desc)
+		matches[i] = AmbiguousMatch{NameWithOwner: c.NameWithOwner, Stars: c.Stars}
 	}
-	fmt.Fprintf(os.Stderr, "Choose [1-%d] (default 1): ", len(candidates))
+	return githubCandidate{}, &AmbiguousMatchError{Query: query, Matches: matches}
+}
 
-	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	if n, err := strconv.Atoi(strings.TrimSpace(line)); err == nil && n >= 1 && n <= len(candidates) {
-		return candidates[n-1]
+// AmbiguousMatch is one same-confidence candidate reported by
+// AmbiguousMatchError, carrying just enough to render a readable list.
+type AmbiguousMatch struct {
+	NameWithOwner string
+	Stars         int
+}
+
+// AmbiguousMatchError reports that a short tool name matched more than one
+// same-confidence GitHub repository, so the caller must specify one
+// explicitly rather than sat guessing.
+type AmbiguousMatchError struct {
+	Query   string
+	Matches []AmbiguousMatch
+}
+
+func (e *AmbiguousMatchError) Error() string {
+	nameWidth := 0
+	for _, m := range e.Matches {
+		if len(m.NameWithOwner) > nameWidth {
+			nameWidth = len(m.NameWithOwner)
+		}
 	}
-	return candidates[0]
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d packages matched %q:\n", len(e.Matches), e.Query)
+	for _, m := range e.Matches {
+		fmt.Fprintf(&b, "  %-*s (%d stars)\n", nameWidth, m.NameWithOwner, m.Stars)
+	}
+	fmt.Fprint(&b, "\nrun: sat install <owner/repo>")
+	return b.String()
 }

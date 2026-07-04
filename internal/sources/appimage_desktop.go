@@ -216,12 +216,20 @@ func HasDesktopEntry(appName string) bool {
 // AppImage, symlinking the entry into the standard XDG applications
 // directory so it appears in application launchers. Never returns an error
 // that should fail an install or backfill — all failure paths are logged
-// (via SAT_DEBUG or ui.Warn) and treated as a clean skip.
-func InstallDesktopEntry(appimagePath, symlinkPath, appName, repoPath string) {
+// (via SAT_DEBUG or ui.Warn) and treated as a clean skip. warnMissingTool
+// controls whether a missing unsquashfs surfaces a ui.Warn: true for a
+// fresh AppImage install (the user just acted, so it's actionable now),
+// false for selfheal's backfill loop (which retries every startup and
+// would otherwise repeat the same warning on every sat invocation).
+func InstallDesktopEntry(appimagePath, symlinkPath, appName, repoPath string, warnMissingTool bool) {
 	debug := os.Getenv(common.EnvSATDebug) != ""
 
 	if _, err := exec.LookPath("unsquashfs"); err != nil {
-		ui.Warn(fmt.Sprintf("desktop entry not created for %s (unsquashfs not found — install squashfs-tools for app-launcher icons)", appName))
+		if warnMissingTool {
+			ui.Warn(fmt.Sprintf("desktop entry not created for %s (unsquashfs not found — install squashfs-tools for app-launcher icons)", appName))
+		} else if debug {
+			fmt.Fprintf(os.Stderr, "[debug]   desktop entry: unsquashfs not found, skipping %s\n", appName)
+		}
 		return
 	}
 

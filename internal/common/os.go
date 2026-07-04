@@ -225,11 +225,6 @@ func PkgInstall(pkg, mgr string) error {
 	return cmd.Run()
 }
 
-// PkgRemove removes a package (stub - will be completed in Phase 11)
-func PkgRemove(pkg, source string) error {
-	return fmt.Errorf("PkgRemove not yet implemented (Phase 11)")
-}
-
 // GetPkgManager returns the detected package manager
 func GetPkgManager() string {
 	return pkgManager
