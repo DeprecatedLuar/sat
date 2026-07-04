@@ -178,10 +178,19 @@ func ReconcileWrappers() (created, pruned int) {
 				continue
 			}
 
-			if _, ok := findWrapperForAppID(appID); !ok {
-				name := resolveWrapperName(flatpakShortName(appID))
-				if createFlatpakWrapper(name, appID) == nil {
+			natural := flatpakShortName(appID)
+			if name, ok := findWrapperForAppID(appID); !ok {
+				if createFlatpakWrapper(resolveWrapperName(natural), appID) == nil {
 					created++
+				}
+			} else if name != natural && resolveWrapperName(natural) == natural {
+				// The wrapper is stuck on a collision-suffixed name (e.g.
+				// "flatseal-2") from when something else occupied the
+				// natural name. That collision is gone now - resolving the
+				// natural name comes back free - so promote the wrapper to
+				// it instead of leaving it suffixed forever.
+				if createFlatpakWrapper(natural, appID) == nil {
+					removeFlatpakWrapper(name)
 				}
 			}
 
@@ -310,12 +319,17 @@ func FlatpakInstall(tool string) (binName, appID string, err error) {
 		return "", "", fmt.Errorf("flatpak install failed")
 	}
 
-	binName, err = EnsureFlatpakWrapper(appID)
-	if err != nil {
+	// EnsureFlatpakWrapper's returned name is purely the wrapper file's
+	// on-disk name, which may be collision-suffixed (e.g. "flatseal-2" if
+	// "flatseal" is already some unrelated PATH binary) - that's a wrapper
+	// concern only and must never become the tool's identity in sat. The
+	// manifest key (and everything the user types/sees - sat update
+	// flatseal, sat list, ...) always stays the plain derived name.
+	if _, err := EnsureFlatpakWrapper(appID); err != nil {
 		return "", "", err
 	}
 
-	return binName, appID, nil
+	return flatpakShortName(appID), appID, nil
 }
 
 // FlatpakUninstall removes a flatpak app and its launcher wrapper. Prefers
