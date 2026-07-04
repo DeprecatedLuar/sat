@@ -66,7 +66,9 @@ func HandleUpdate(args []string, version, repo string) error {
 }
 
 // updateOne updates a single tool via its recorded source, mirroring
-// uninstall.go's removeViaSource dispatch shape.
+// uninstall.go's removeViaSource dispatch shape. On success, re-records the
+// tool's new version in the manifest so the next outdated scan compares
+// against the post-update version instead of the stale pre-update one.
 func updateOne(tool string) {
 	sourceStr := manifest.Get(tool)
 	if sourceStr == "" {
@@ -74,50 +76,89 @@ func updateOne(tool string) {
 		return
 	}
 
+	var newVersion string
 	err := ui.RunWithSpinner(tool, sourceStr, func() error {
-		return updateViaSource(tool, sourceStr)
+		v, err := updateViaSource(tool, sourceStr)
+		newVersion = v
+		return err
 	})
 	if err != nil {
 		ui.StatusFail(fmt.Sprintf("%s: %v", tool, err))
 		return
 	}
 
-	ui.StatusOK(fmt.Sprintf("%s updated", tool), sourceStr)
+	sourceType := manifest.GetSourceType(sourceStr)
+	identity := manifest.GetSourceIdentity(sourceStr)
+	newSourceStr := manifest.BuildSourceString(sourceType, identity, newVersion)
+	if err := manifest.Add(tool, newSourceStr); err != nil && os.Getenv(common.EnvSATDebug) != "" {
+		fmt.Fprintf(os.Stderr, "%s failed to record %s's new version in manifest: %v\n", common.DebugPrefix, tool, err)
+	}
+
+	ui.StatusOK(fmt.Sprintf("%s updated", tool), newSourceStr)
 }
 
 // updateViaSource dispatches to the source-specific update function
-// recorded in the manifest for tool.
-func updateViaSource(tool, sourceStr string) error {
+// recorded in the manifest for tool, returning the tool's version after
+// the update so the caller can refresh the manifest.
+func updateViaSource(tool, sourceStr string) (newVersion string, err error) {
 	sourceType := manifest.GetSourceType(sourceStr)
 	identity := manifest.GetSourceIdentity(sourceStr)
 
 	switch sourceType {
 	case common.SourceCargo, "rust":
-		return sources.CargoUpdate(tool)
+		if err := sources.CargoUpdate(tool); err != nil {
+			return "", err
+		}
+		return sources.CargoGetVersion(tool), nil
 	case common.SourceBrew:
-		return sources.BrewUpdate(tool)
+		if err := sources.BrewUpdate(tool); err != nil {
+			return "", err
+		}
+		return sources.BrewGetVersion(tool), nil
 	case common.SourceNix:
-		return sources.NixUpdate(tool)
+		if err := sources.NixUpdate(tool); err != nil {
+			return "", err
+		}
+		return sources.NixGetVersion(tool), nil
 	case "nixos":
-		return fmt.Errorf("declarative NixOS package - update it via your NixOS configuration instead")
+		return "", fmt.Errorf("declarative NixOS package - update it via your NixOS configuration instead")
 	case "apt", "pacman", "apk", "dnf", common.SourceSystem:
-		return sources.Update(tool)
+		if err := sources.Update(tool); err != nil {
+			return "", err
+		}
+		return sources.GetVersion(tool), nil
 	case common.SourceGH, "github":
-		return sources.GitHubUpdate(tool, identity)
+		if err := sources.GitHubUpdate(tool, identity); err != nil {
+			return "", err
+		}
+		return sources.GitHubGetVersion(identity), nil
 	case common.SourceAppImage:
-		return sources.AppImageUpdate(tool, identity)
+		if err := sources.AppImageUpdate(tool, identity); err != nil {
+			return "", err
+		}
+		return sources.AppImageGetVersion(identity), nil
 	case common.SourceSat:
-		return fmt.Errorf("use 'sat update sat' to update sat itself")
-	case common.SourceNPM, common.SourceUV, common.SourceGo, common.SourceFlatpak:
-		return fmt.Errorf("%s update not yet implemented in the Go port", ui.SourceDisplay(sourceStr))
+		return "", fmt.Errorf("use 'sat update sat' to update sat itself")
+	case common.SourceNPM:
+		if err := sources.NpmUpdate(tool, identity); err != nil {
+			return "", err
+		}
+		return sources.NpmGetVersion(tool), nil
+	case common.SourceFlatpak:
+		if err := sources.FlatpakUpdate(tool, identity); err != nil {
+			return "", err
+		}
+		return sources.FlatpakGetVersion(identity), nil
+	case common.SourceUV, common.SourceGo:
+		return "", fmt.Errorf("%s update not yet implemented in the Go port", ui.SourceDisplay(sourceStr))
 	default:
-		return fmt.Errorf("no automated update for source %q", sourceType)
+		return "", fmt.Errorf("no automated update for source %q", sourceType)
 	}
 }
 
 // checkOutdated dispatches to the source-specific outdated check for tool.
 // ok is false when the source has no CheckOutdated implementation
-// (npm/flatpak/uv/go, or a non-apt system package manager) or the check
+// (flatpak/uv/go, or a non-apt system package manager) or the check
 // itself failed - callers should silently skip these from a bulk scan
 // rather than treat them as errors.
 func checkOutdated(tool, sourceStr string) (current, latest string, ok bool) {
@@ -138,6 +179,8 @@ func checkOutdated(tool, sourceStr string) (current, latest string, ok bool) {
 		current, latest, err = sources.GitHubCheckOutdated(tool, identity)
 	case common.SourceAppImage:
 		current, latest, err = sources.AppImageCheckOutdated(tool, identity)
+	case common.SourceNPM:
+		current, latest, err = sources.NpmCheckOutdated(tool, identity)
 	default:
 		return "", "", false
 	}

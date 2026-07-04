@@ -119,7 +119,7 @@ func DisplayToolEntry(prog, sourceStr, prefix, suffix string) {
 	version := manifest.GetSourceVersion(sourceStr)
 
 	if version != "" {
-		fmt.Printf("  %s%-*s [%s%s%s] %sv%s%s%s\n",
+		fmt.Printf("  %s%-*s [%s%s%s] %s%s%s%s\n",
 			prefix, ToolNameWidth, prog, color, display, Reset, Dim, version, Reset, suffix)
 	} else {
 		fmt.Printf("  %s%-*s [%s%s%s]%s\n",

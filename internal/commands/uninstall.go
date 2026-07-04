@@ -71,7 +71,11 @@ func removeViaSource(tool, sourceStr string) error {
 		return sources.GitHubUninstall(tool, sourceStr)
 	case common.SourceAppImage:
 		return sources.AppImageUninstall(tool, sourceStr)
-	case common.SourceNPM, common.SourceUV, common.SourceGo, common.SourceFlatpak, common.SourceSat:
+	case common.SourceNPM:
+		return sources.NpmUninstall(tool, sourceStr)
+	case common.SourceFlatpak:
+		return sources.FlatpakUninstall(tool, sourceStr)
+	case common.SourceUV, common.SourceGo, common.SourceSat:
 		return fmt.Errorf("%s uninstall not yet implemented in the Go port", ui.SourceDisplay(sourceStr))
 	case "unknown":
 		return sources.UnknownUninstall(tool, sourceStr)

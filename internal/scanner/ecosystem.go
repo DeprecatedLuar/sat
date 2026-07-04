@@ -106,17 +106,23 @@ func ScanFlatpak() ([]sources.Package, error) {
 			continue
 		}
 
-		// Use last component as prog name (org.gimp.GIMP → gimp)
+		// Use last component as prog name (org.gimp.GIMP → gimp). This is
+		// the manifest key, independent of the wrapper's actual on-disk
+		// filename - EnsureFlatpakWrapper may suffix that to avoid a
+		// collision (e.g. "discord-2"), but the manifest should keep
+		// tracking this app as "discord" regardless, since that's the name
+		// already used everywhere else (sat update discord, sat list, ...).
 		parts := strings.Split(appID, FlatpakIDSeparator)
 		prog := strings.ToLower(parts[len(parts)-1])
+
+		sources.EnsureFlatpakWrapper(appID)
 
 		packages = append(packages, sources.Package{
 			Name:     prog,
 			Source:   SourceFlatpak,
 			Identity: appID,
-			Version:  "",
+			Version:  sources.FlatpakGetVersion(appID),
 		})
-		// TODO: Create flatpak wrapper (Phase 5)
 	}
 
 	return packages, nil
@@ -226,8 +232,9 @@ func GetVersionForSource(prog, sourceType, identity string) string {
 		return sources.NixOSGetVersion(prog)
 	case "apt", "pacman", "apk", "dnf", "system":
 		return sources.GetVersion(prog)
+	case "flatpak":
+		return sources.FlatpakGetVersion(identity)
 		// TODO: Add more sources as they're implemented in later phases
-		// case "npm": return sources.NPMGetVersion(prog)
 		// case "uv": return sources.UVGetVersion(prog)
 		// case "go": return sources.GoGetVersion(prog)
 		// case "flatpak": return sources.FlatpakGetVersion(identity)

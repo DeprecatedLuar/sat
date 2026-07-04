@@ -19,11 +19,14 @@ func Scan() error {
 
 	// Display results
 	fmt.Println()
-	if result.Added == 0 && result.Pruned == 0 {
+	if result.Added == 0 && result.Pruned == 0 && result.Repaired == 0 {
 		fmt.Println("Manifest is up to date (no changes)")
 	} else {
 		if result.Pruned > 0 {
 			fmt.Printf("Pruned %d entries\n", result.Pruned)
+		}
+		if result.Repaired > 0 {
+			fmt.Printf("Repaired %d entries\n", result.Repaired)
 		}
 		fmt.Printf("Added %d packages to manifest\n", result.Added)
 	}

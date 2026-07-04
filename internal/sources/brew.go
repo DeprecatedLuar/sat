@@ -315,3 +315,53 @@ func BrewScan() ([]Package, error) {
 
 	return packages, nil
 }
+
+// BrewManifestIssues reports brew-tracked manifest entries that are no
+// longer explicitly installed - present only as a dependency of something
+// else, per `brew leaves` - and should be pruned.
+func BrewManifestIssues() ManifestIssues {
+	var issues ManifestIssues
+
+	leaves := brewLeavesSet()
+	if len(leaves) == 0 {
+		return issues
+	}
+
+	entries, err := manifest.All()
+	if err != nil {
+		return issues
+	}
+
+	for _, e := range entries {
+		if manifest.GetSourceType(e.Source) != common.SourceBrew {
+			continue
+		}
+		if !leaves[e.Tool] {
+			issues.Prune = append(issues.Prune, PrunedEntry{Tool: e.Tool, Reason: "brew dep"})
+		}
+	}
+
+	return issues
+}
+
+// brewLeavesSet returns the set of brew packages explicitly installed by
+// the user (not pulled in only as a dependency of something else).
+func brewLeavesSet() map[string]bool {
+	leaves := make(map[string]bool)
+	if _, err := exec.LookPath("brew"); err != nil {
+		return leaves
+	}
+
+	var output bytes.Buffer
+	cmd := exec.Command("brew", "leaves")
+	cmd.Stdout = &output
+	if cmd.Run() == nil {
+		for _, leaf := range strings.Split(output.String(), "\n") {
+			leaf = strings.TrimSpace(leaf)
+			if leaf != "" {
+				leaves[leaf] = true
+			}
+		}
+	}
+	return leaves
+}

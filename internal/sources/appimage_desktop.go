@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/DeprecatedLuar/sat/internal/common"
+	"github.com/DeprecatedLuar/sat/internal/manifest"
 	"github.com/DeprecatedLuar/sat/internal/ui"
 )
 
@@ -202,6 +203,41 @@ func writeSkipMarker(appName string) {
 		return
 	}
 	_ = os.WriteFile(skipMarkerPath(appName), nil, 0644)
+}
+
+// BackfillDesktopEntries generates desktop entries for AppImages installed
+// before desktop-entry generation existed (or installed while unsquashfs
+// was unavailable). Idempotent and local-only: skips any tool that already
+// has an entry or has been marked permanently skippable via
+// HasDesktopEntry, so the common case is one cheap stat per installed
+// AppImage. Called by selfheal on every invocation.
+func BackfillDesktopEntries() {
+	appimagesDir := common.AppImagesDir()
+	entries, err := os.ReadDir(appimagesDir)
+	if err != nil {
+		return
+	}
+
+	skipDirs := map[string]bool{
+		common.AppImageApplicationsDirName: true,
+		common.AppImageIconsDirName:        true,
+	}
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || skipDirs[name] {
+			continue
+		}
+		if HasDesktopEntry(name) {
+			continue
+		}
+
+		appimagePath := filepath.Join(appimagesDir, name)
+		symlinkPath := filepath.Join(common.LocalBin(), name)
+		repoPath := manifest.GetSourceIdentity(manifest.Get(name))
+
+		InstallDesktopEntry(appimagePath, symlinkPath, name, repoPath, false)
+	}
 }
 
 // HasDesktopEntry reports whether appName already has a generated desktop

@@ -54,3 +54,11 @@ func LocalBin() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, LocalBinSubpath)
 }
+
+// FlatpakWrapperDir returns the directory where sat stores generated
+// flatpak launcher wrapper scripts: $SAT_DATA/bin/flatpak. Flatpak apps
+// aren't directly on $PATH, so each tracked app gets a small wrapper here
+// (symlinked into LocalBin()) that execs `flatpak run <app_id>`.
+func FlatpakWrapperDir() string {
+	return filepath.Join(manifest.DataDir(), manifest.BinDirName, manifest.FlatpakDirName)
+}

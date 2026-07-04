@@ -24,7 +24,7 @@ go vet ./...
 go test ./internal/sources/ -run TestName   # single test
 ```
 
-Bash reference implementation (do not add new features here, only consult for parity):
+Bash reference (see `## Bash Reference` below):
 ```bash
 rm -rf ~/.local/share/sat/lib
 ln -s ~/Workspace/dev/sat/lib ~/.local/share/sat/lib   # live-edit symlink, no rebuild needed
@@ -40,8 +40,8 @@ internal/
   config/                  # ~/.config/sat/config.toml — install fallback order, BurntSushi/toml
   manifest/                # source string parsing + system manifest CRUD (master/session manifests not yet ported)
   sources/                 # one file per package manager: Install/Uninstall/GetVersion required;
-                            # Search/QueryLatestVersion/CheckOutdated/Update optional per source (not every
-                            # source can support all of them, e.g. appimage/go/sat aren't searchable registries)
+                            # Search/QueryLatestVersion/CheckOutdated/Update/ManifestIssues optional per source
+                            # (not every source can support all of them, e.g. appimage/go/sat aren't registries)
   sources/github/          # GitHub mechanics (API fetch, release/tree inspection, huber/go/python installers,
                             # fuzzy search+disambiguation); internal/sources/github.go is a thin orchestrator
                             # over this package + AppImage install, kept as two files to avoid an import cycle
@@ -54,6 +54,7 @@ internal/
 **Design decisions:**
 - Manual routing, not cobra — startup performance and simplicity.
 - Source contract is intentionally non-uniform: dispatch sites only call the optional methods a given source actually implements.
+- `sat scan` never revisits already-tracked entries (only adds new ones), so a source can optionally implement `XManifestIssues() ManifestIssues{Prune, Repair}` to self-report staleness (dup entries, missing versions, etc.); `scanner.CleanupManifest` just applies whatever's reported, with no source-specific logic of its own.
 - Install fallback order lives in user-editable `~/.config/sat/config.toml` (Go-only; bash hardcodes `INSTALL_ORDER`). Sources omitted from the array are skipped entirely, not just deprioritized.
 - `SAT_DATA` env var overrides all data paths (used for test isolation).
 - AppImage installs also generate a desktop entry/icon (`internal/sources/appimage_desktop.go`) by reading the embedded squashfs via `unsquashfs` at a computed ELF offset — deliberately never executes the AppImage, since `--appimage-extract` can be hijacked by OS-level wrappers (e.g. NixOS's `appimage-run` via binfmt_misc) into launching the app instead of extracting quietly. Optional/non-fatal: warns visibly if `unsquashfs` is missing rather than failing or silently skipping.

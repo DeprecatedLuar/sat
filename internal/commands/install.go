@@ -14,7 +14,7 @@ import (
 	"github.com/DeprecatedLuar/sat/internal/ui"
 )
 
-const installUsage = "usage: sat install <program>[:source] [--system|--rust|--python|--node|--go|--brew|--nix|--flatpak|--gh] ..."
+const installUsage = "usage: sat install <program>[:source] ... [--system|--rust|--python|--node|--go|--brew|--nix|--flatpak|--gh] <program> ..."
 
 // installFlagSource maps a CLI flag to the source it forces for every spec
 // that doesn't carry its own ":source" suffix (bash's DEFAULT_SOURCE).
@@ -45,27 +45,38 @@ type installResult struct {
 	version  string
 }
 
-// Install installs one or more tools. For each spec, tries in order: a
-// direct "owner/repo" GitHub path, an already-installed check, an
-// explicitly forced source (":source" suffix or a --flag), or the
-// fallback chain configured in ~/.config/sat/config.toml.
+// installSpec pairs a tool spec with the source flag in effect for it (see
+// Install's positional scoping below); source is "" when no flag applied.
+type installSpec struct {
+	spec   string
+	source string
+}
+
+// Install installs one or more tools. A --flag (e.g. --flatpak) forces the
+// source for every spec that follows it, until the next flag switches to a
+// different source - so a single invocation can mix sources, e.g.
+// "sat install --flatpak a b --nix c d". Specs before the first flag have
+// no forced source. For each spec, tries in order: a direct "owner/repo"
+// GitHub path, an already-installed check, its forced source (":source"
+// suffix or the flag in scope), or the fallback chain configured in
+// ~/.config/sat/config.toml.
 func Install(args []string) error {
-	defaultSource := ""
-	var specs []string
+	currentSource := ""
+	var specs []installSpec
 	for _, arg := range args {
 		if source, ok := installFlagSource[arg]; ok {
-			defaultSource = source
+			currentSource = source
 			continue
 		}
-		specs = append(specs, arg)
+		specs = append(specs, installSpec{spec: arg, source: currentSource})
 	}
 
 	if len(specs) == 0 {
 		return fmt.Errorf(installUsage)
 	}
 
-	for _, spec := range specs {
-		installOne(spec, defaultSource)
+	for _, s := range specs {
+		installOne(s.spec, s.source)
 	}
 
 	return nil
@@ -245,7 +256,21 @@ func trySource(tool, source string) (installResult, error) {
 	case common.SourceGHAppImage:
 		return installFromGitHub(tool, "appimage")
 
-	case common.SourceUV, common.SourceNPM, common.SourceGo, common.SourceFlatpak, common.SourceSat:
+	case common.SourceNPM:
+		identity, err := sources.NpmInstall(tool)
+		if err != nil {
+			return installResult{}, err
+		}
+		return installResult{binName: tool, source: source, identity: identity, version: sources.NpmGetVersion(tool)}, nil
+
+	case common.SourceFlatpak:
+		binName, appID, err := sources.FlatpakInstall(tool)
+		if err != nil {
+			return installResult{}, err
+		}
+		return installResult{binName: binName, source: source, identity: appID, version: sources.FlatpakGetVersion(appID)}, nil
+
+	case common.SourceUV, common.SourceGo, common.SourceSat:
 		return installResult{}, fmt.Errorf("%s install not yet implemented in the Go port", ui.SourceDisplay(source))
 
 	default:

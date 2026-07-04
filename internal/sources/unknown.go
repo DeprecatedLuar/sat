@@ -30,3 +30,28 @@ func UnknownUninstall(pkg, source string) error {
 	}
 	return nil
 }
+
+// UnknownManifestIssues reports "unknown"-tracked manifest entries whose
+// recorded path (resolved at scan time by scanner.ScanLocalBin) no longer
+// exists, and should be pruned.
+func UnknownManifestIssues() ManifestIssues {
+	var issues ManifestIssues
+
+	entries, err := manifest.All()
+	if err != nil {
+		return issues
+	}
+
+	for _, e := range entries {
+		if manifest.GetSourceType(e.Source) != "unknown" {
+			continue
+		}
+
+		path := manifest.GetSourceIdentity(e.Source)
+		if path == "" || !fileExists(path) {
+			issues.Prune = append(issues.Prune, PrunedEntry{Tool: e.Tool, Reason: "missing"})
+		}
+	}
+
+	return issues
+}

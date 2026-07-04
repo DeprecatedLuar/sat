@@ -2,9 +2,6 @@ package scanner
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
-	"strings"
 
 	"github.com/DeprecatedLuar/sat/internal/manifest"
 	"github.com/DeprecatedLuar/sat/internal/sources"
@@ -14,18 +11,13 @@ import (
 const (
 	// Cleanup reasons
 	ReasonExcluded = "excluded"
-	ReasonBrewDep  = "brew dep"
-	ReasonMissing  = "missing"
-
-	// Manifest format (CommentPrefix defined in exclusion.go)
-	ManifestDelim = "="
-	FieldCount    = 2
 )
 
 // ScanResult represents the result of a scan operation
 type ScanResult struct {
-	Added  int
-	Pruned int
+	Added    int
+	Pruned   int
+	Repaired int
 }
 
 // ScanAll scans all ecosystems and returns scan results
@@ -37,9 +29,9 @@ func ScanAll() (*ScanResult, error) {
 	result.Added += scanSource(sources.BrewScan)
 	result.Added += scanSource(sources.NixScan)
 	result.Added += scanSource(sources.SystemScan)
+	result.Added += scanSource(sources.NpmScan)
 
 	// Legacy directory scans for sources not yet modularized
-	result.Added += scanDir("npm", NPMBinDir())
 	result.Added += scanDir("uv", UVToolsDir())
 	result.Added += scanDir("go", GoBinDir())
 
@@ -48,8 +40,9 @@ func ScanAll() (*ScanResult, error) {
 	result.Added += scanSource(ScanAppImages)
 	result.Added += scanSource(ScanLocalBin)
 
-	// Clean up AFTER scanning (removes exclusions, brew deps, stale unknowns)
-	result.Pruned = CleanupManifest()
+	// Clean up AFTER scanning (removes exclusions, brew deps, stale unknowns,
+	// backfills missing npm versions)
+	result.Pruned, result.Repaired = CleanupManifest()
 
 	return result, nil
 }
@@ -122,95 +115,59 @@ func tryAddPackage(pkg sources.Package) bool {
 	return true
 }
 
-// CleanupManifest removes stale manifest entries after scanning
-// Handles: exclusion patterns, brew dependencies, dotfile symlinks
-func CleanupManifest() int {
-	brewLeaves := getBrewLeaves()
+// CleanupManifest removes stale manifest entries after scanning. Exclusion
+// patterns are cross-cutting user policy, so they're applied here directly;
+// every other kind of staleness is source-specific and reported by that
+// source's own ManifestIssues function (e.g. sources.NpmManifestIssues,
+// sources.BrewManifestIssues, sources.UnknownManifestIssues) - this
+// function only applies what's reported (manifest.Remove/manifest.Add +
+// display), the same data-in/data-out contract scanSource follows for
+// newly discovered packages. Returns (pruned, repaired) counts.
+func CleanupManifest() (int, int) {
 	pruned := 0
-	manifestPath := manifest.ManifestPath()
-	entries, err := readManifestEntries(manifestPath)
-	if err != nil {
-		return 0
-	}
+	repaired := 0
 
-	for prog, srcString := range entries {
-		sourceType := manifest.GetSourceType(srcString)
-		identity := manifest.GetSourceIdentity(srcString)
-
-		shouldPrune := false
-		reason := ""
-
-		// 1. Check exclusion patterns
-		if IsExcluded(prog, sourceType) {
-			shouldPrune = true
-			reason = ReasonExcluded
-		} else if sourceType == "brew" && len(brewLeaves) > 0 {
-			// 2. Check brew deps (not explicitly installed)
-			if !brewLeaves[prog] {
-				shouldPrune = true
-				reason = ReasonBrewDep
+	entries, err := manifest.All()
+	if err == nil {
+		for _, e := range entries {
+			if IsExcluded(e.Tool, manifest.GetSourceType(e.Source)) {
+				manifest.Remove(e.Tool)
+				fmt.Printf("  %s- %-20s (%s)%s\n", ui.Dim, e.Tool, ReasonExcluded, ui.Reset)
+				pruned++
 			}
-		} else if sourceType == "unknown" {
-			// 3. Validate unknown sources (check if file still exists)
-			if identity == "" || !FileExists(identity) {
-				shouldPrune = true
-				reason = ReasonMissing
-			}
-		}
-
-		if shouldPrune {
-			manifest.Remove(prog)
-			fmt.Printf("  %s- %-20s (%s)%s\n", ui.Dim, prog, reason, ui.Reset)
-			pruned++
 		}
 	}
 
-	return pruned
+	for _, issues := range []sources.ManifestIssues{
+		sources.BrewManifestIssues(),
+		sources.UnknownManifestIssues(),
+		sources.NpmManifestIssues(),
+	} {
+		p, r := applyManifestIssues(issues)
+		pruned += p
+		repaired += r
+	}
+
+	return pruned, repaired
 }
 
-// getBrewLeaves returns map of explicitly installed brew packages
-func getBrewLeaves() map[string]bool {
-	leaves := make(map[string]bool)
-	if _, err := exec.LookPath("brew"); err != nil {
-		return leaves
+// applyManifestIssues mutates the manifest and prints per the staleness a
+// source module reported, without knowing anything about which source it
+// came from or why.
+func applyManifestIssues(issues sources.ManifestIssues) (pruned, repaired int) {
+	for _, p := range issues.Prune {
+		manifest.Remove(p.Tool)
+		fmt.Printf("  %s- %-20s (%s)%s\n", ui.Dim, p.Tool, p.Reason, ui.Reset)
+		pruned++
 	}
-
-	var output strings.Builder
-	cmd := exec.Command("brew", "leaves")
-	cmd.Stdout = &output
-	if cmd.Run() == nil {
-		for _, leaf := range strings.Split(output.String(), "\n") {
-			leaf = strings.TrimSpace(leaf)
-			if leaf != "" {
-				leaves[leaf] = true
-			}
-		}
-	}
-	return leaves
-}
-
-// readManifestEntries reads manifest file and returns map of tool -> source string
-func readManifestEntries(path string) (map[string]string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return make(map[string]string), nil
-		}
-		return nil, err
-	}
-
-	entries := make(map[string]string)
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, CommentPrefix) {
+	for _, r := range issues.Repair {
+		if err := manifest.Add(r.Tool, r.NewSource); err != nil {
 			continue
 		}
-
-		parts := strings.SplitN(line, ManifestDelim, FieldCount)
-		if len(parts) == FieldCount {
-			entries[parts[0]] = parts[1]
-		}
+		repaired++
+		color := ui.SourceColor(r.NewSource)
+		ui.DisplayToolEntry(r.Tool, r.NewSource, color+"~"+ui.Reset+" ", "")
 	}
-
-	return entries, nil
+	return
 }
+
