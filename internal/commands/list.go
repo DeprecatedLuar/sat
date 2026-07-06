@@ -10,21 +10,23 @@ import (
 	"github.com/DeprecatedLuar/sat/internal/ui"
 )
 
-// filterAliases maps a source filter argument to the set of normalized
-// source-type/display-name tokens it should match against.
+// filterAliases maps a --flag source filter argument to the set of
+// normalized source-type/display-name tokens it should match against.
+// Mirrors installFlagSource's --flag convention so a single invocation can
+// combine multiple filters, e.g. "sat ls --flatpak --nix".
 var filterAliases = map[string][]string{
-	"fpk": {"flatpak"}, "flatpak": {"flatpak"},
-	"img": {"appimage"}, "appimage": {"appimage"},
-	"sys": {"system"}, "system": {"system"},
-	"nix": {"nix", "nixos"}, "nixos": {"nix", "nixos"},
-	"gh": {"github", "repo", "gh"}, "github": {"github", "repo", "gh"},
-	"npm": {"npm", "node"}, "node": {"npm", "node"},
-	"py": {"python", "uv"}, "python": {"python", "uv"}, "uv": {"python", "uv"},
-	"cargo": {"cargo", "rust"}, "rust": {"cargo", "rust"},
-	"go":     {"go"},
-	"brew":   {"brew"},
-	"sat":    {"sat"},
-	"manual": {"manual"},
+	"--fpk": {"flatpak"}, "--flatpak": {"flatpak"},
+	"--img": {"appimage"}, "--appimage": {"appimage"},
+	"--sys": {"system"}, "--system": {"system"},
+	"--nix": {"nix", "nixos"}, "--nixos": {"nix", "nixos"},
+	"--gh": {"github", "repo", "gh"}, "--github": {"github", "repo", "gh"},
+	"--npm": {"npm", "node"}, "--node": {"npm", "node"},
+	"--py": {"python", "uv"}, "--python": {"python", "uv"}, "--uv": {"python", "uv"},
+	"--cargo": {"cargo", "rust"}, "--rust": {"cargo", "rust"},
+	"--go":     {"go"},
+	"--brew":   {"brew"},
+	"--sat":    {"sat"},
+	"--manual": {"manual"},
 }
 
 // List displays tracked packages from the system manifest, optionally

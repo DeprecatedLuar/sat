@@ -25,9 +25,59 @@ var flatpakWrapperAppIDRe = regexp.MustCompile(`exec flatpak run (\S+)`)
 
 // flatpakShortName extracts a short launcher name from a flatpak app ID,
 // e.g. "org.gimp.GIMP" -> "gimp". Mirrors bash's get_flatpak_shortname.
+// Used as a fallback by FlatpakToolName when no clean display name is
+// available (e.g. flatpak isn't installed, or the app isn't in the list).
 func flatpakShortName(appID string) string {
 	parts := strings.Split(appID, ".")
 	return strings.ToLower(parts[len(parts)-1])
+}
+
+// flatpakCleanNameRe matches display names made up only of letters and
+// digits - the only kind safe to use verbatim as a tool/command name.
+var flatpakCleanNameRe = regexp.MustCompile(`^[A-Za-z0-9]+$`)
+
+// FlatpakDisplayNames returns every installed flatpak app's canonical
+// display name, keyed by app ID (flatpak list --app --columns=application,name).
+// Returns an empty map if flatpak isn't installed or the command fails.
+func FlatpakDisplayNames() map[string]string {
+	names := make(map[string]string)
+	if _, err := exec.LookPath("flatpak"); err != nil {
+		return names
+	}
+
+	var output bytes.Buffer
+	cmd := exec.Command("flatpak", "list", "--app", "--columns=application,name")
+	cmd.Stdout = &output
+	if cmd.Run() != nil {
+		return names
+	}
+
+	for _, line := range strings.Split(output.String(), "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) < 2 {
+			continue
+		}
+		appID := strings.TrimSpace(fields[0])
+		name := strings.TrimSpace(fields[1])
+		if appID != "" && name != "" {
+			names[appID] = name
+		}
+	}
+	return names
+}
+
+// FlatpakToolName picks the tool/manifest name for appID: its canonical
+// display name (from displayNames, as returned by FlatpakDisplayNames),
+// lowercased, if that name is plain alphanumeric - otherwise falls back to
+// flatpakShortName's ID-derived name. This avoids picking up spaces,
+// parentheses, etc. from display names like "Google Chrome (unstable)",
+// while fixing IDs whose last segment is a generic word rather than the
+// app name (e.g. "org.telegram.desktop" -> "telegram", not "desktop").
+func FlatpakToolName(appID string, displayNames map[string]string) string {
+	if name, ok := displayNames[appID]; ok && flatpakCleanNameRe.MatchString(name) {
+		return strings.ToLower(name)
+	}
+	return flatpakShortName(appID)
 }
 
 // resolveWrapperName returns a wrapper name guaranteed not to collide with
@@ -167,6 +217,7 @@ func ReconcileWrappers() (created, pruned int) {
 	for _, id := range listInstalledFlatpakAppIDs() {
 		installed[id] = true
 	}
+	displayNames := FlatpakDisplayNames()
 
 	if entries, err := manifest.All(); err == nil {
 		for _, e := range entries {
@@ -178,7 +229,7 @@ func ReconcileWrappers() (created, pruned int) {
 				continue
 			}
 
-			natural := flatpakShortName(appID)
+			natural := FlatpakToolName(appID, displayNames)
 			if name, ok := findWrapperForAppID(appID); !ok {
 				if createFlatpakWrapper(resolveWrapperName(natural), appID) == nil {
 					created++
@@ -329,7 +380,7 @@ func FlatpakInstall(tool string) (binName, appID string, err error) {
 		return "", "", err
 	}
 
-	return flatpakShortName(appID), appID, nil
+	return FlatpakToolName(appID, FlatpakDisplayNames()), appID, nil
 }
 
 // FlatpakUninstall removes a flatpak app and its launcher wrapper. Prefers

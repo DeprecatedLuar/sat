@@ -17,9 +17,6 @@ const (
 	SourceAppImage = "appimage"
 	SourceUnknown  = "unknown"
 
-	// Flatpak parsing
-	FlatpakIDSeparator = "."
-
 	// Executable permission mask
 	ExecutableMask = 0111
 )
@@ -100,20 +97,24 @@ func ScanFlatpak() ([]sources.Package, error) {
 		return nil, nil
 	}
 
+	displayNames := sources.FlatpakDisplayNames()
+
 	for _, appID := range strings.Split(output.String(), "\n") {
 		appID = strings.TrimSpace(appID)
 		if appID == "" {
 			continue
 		}
 
-		// Use last component as prog name (org.gimp.GIMP → gimp). This is
-		// the manifest key, independent of the wrapper's actual on-disk
-		// filename - EnsureFlatpakWrapper may suffix that to avoid a
-		// collision (e.g. "discord-2"), but the manifest should keep
-		// tracking this app as "discord" regardless, since that's the name
-		// already used everywhere else (sat update discord, sat list, ...).
-		parts := strings.Split(appID, FlatpakIDSeparator)
-		prog := strings.ToLower(parts[len(parts)-1])
+		// Prefer the app's canonical display name (e.g. "Telegram" for
+		// org.telegram.desktop, whose last ID segment is a generic word);
+		// falls back to the last ID component if the display name isn't
+		// plain alphanumeric. This is the manifest key, independent of the
+		// wrapper's actual on-disk filename - EnsureFlatpakWrapper may
+		// suffix that to avoid a collision (e.g. "discord-2"), but the
+		// manifest should keep tracking this app under its natural name
+		// regardless, since that's the name used everywhere else (sat
+		// update discord, sat list, ...).
+		prog := sources.FlatpakToolName(appID, displayNames)
 
 		sources.EnsureFlatpakWrapper(appID)
 
