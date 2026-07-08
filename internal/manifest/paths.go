@@ -18,6 +18,7 @@ const (
 	BinDirName        = "bin"
 	AppImagesDirName  = "appimages"
 	FlatpakDirName    = "flatpak"
+	SourcesDirName    = "sources"
 )
 
 // DataDir returns the base sat data directory

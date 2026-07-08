@@ -62,3 +62,11 @@ func LocalBin() string {
 func FlatpakWrapperDir() string {
 	return filepath.Join(manifest.DataDir(), manifest.BinDirName, manifest.FlatpakDirName)
 }
+
+// SourcesBinDir returns the directory where sat stores package-manager
+// binaries bootstrapped via `sat source`: $SAT_DATA/bin/sources. The
+// binary is moved here and symlinked back into its original location
+// (typically LocalBin()) so it stays under sat's management.
+func SourcesBinDir() string {
+	return filepath.Join(manifest.DataDir(), manifest.BinDirName, manifest.SourcesDirName)
+}

@@ -439,46 +439,92 @@ func FlatpakGetVersion(appID string) string {
 	return ""
 }
 
-// flatpakRemoteVersionRe extracts the "Version:" line from
-// flatpak remote-info output.
-var flatpakRemoteVersionRe = regexp.MustCompile(`(?m)^\s*Version:\s*(\S+)`)
+// FlatpakUpdateInfo is one ref (app or runtime) flatpak itself reports as
+// having a pending update. Branch disambiguates refs that share an AppID
+// but have multiple branches installed side by side (e.g. a GL driver
+// runtime installed for two SDK versions at once); Name is flatpak's own
+// display name, used for refs with no sat-tracked tool name.
+type FlatpakUpdateInfo struct {
+	AppID   string
+	Version string // latest/target version; blank for refs with no version metadata
+	Branch  string
+	Name    string
+}
 
-// FlatpakCheckOutdated checks if a flatpak app has updates available on
-// Flathub. appID is the identity recorded in the manifest.
-func FlatpakCheckOutdated(tool, appID string) (current, latest string, err error) {
+// FlatpakListUpdates asks flatpak for every ref (app or runtime) with a
+// pending update in one non-destructive call, instead of sat polling each
+// tracked app's remote individually. This is what lets sat surface
+// runtime updates (which sat never tracks in its own manifest) alongside
+// tracked-app updates without reimplementing flatpak's own update
+// resolution - a ref's presence in this list is flatpak's own
+// authoritative "needs updating" signal, not just a version-string diff.
+// Returns nil, nil if flatpak isn't installed.
+func FlatpakListUpdates() ([]FlatpakUpdateInfo, error) {
 	if _, err := exec.LookPath("flatpak"); err != nil {
-		return "", "", fmt.Errorf("flatpak not installed")
-	}
-	if appID == "" {
-		return "", "", fmt.Errorf("no app ID recorded for %s", tool)
-	}
-
-	if sourceStr := manifest.Get(tool); sourceStr != "" {
-		current = manifest.GetSourceVersion(sourceStr)
-	}
-	if current == "" {
-		current = FlatpakGetVersion(appID)
-	}
-	if current == "" {
-		return "", "", fmt.Errorf("app not installed")
+		return nil, nil
 	}
 
 	var output bytes.Buffer
-	cmd := exec.Command("flatpak", "remote-info", "flathub", appID)
+	cmd := exec.Command("flatpak", "remote-ls", "--updates", "--columns=application,version,branch,name")
+	cmd.Stdout = &output
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("failed to query flatpak updates")
+	}
+
+	var updates []FlatpakUpdateInfo
+	for _, line := range strings.Split(strings.TrimRight(output.String(), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) < 4 {
+			continue
+		}
+		updates = append(updates, FlatpakUpdateInfo{
+			AppID:   strings.TrimSpace(fields[0]),
+			Version: strings.TrimSpace(fields[1]),
+			Branch:  strings.TrimSpace(fields[2]),
+			Name:    strings.TrimSpace(fields[3]),
+		})
+	}
+	return updates, nil
+}
+
+// FlatpakInstalledVersions returns the installed version of every flatpak
+// ref (app or runtime), keyed by "appID//branch". Unlike FlatpakGetVersion
+// (apps only, via --app), this covers runtimes too in one call.
+func FlatpakInstalledVersions() map[string]string {
+	versions := make(map[string]string)
+
+	var output bytes.Buffer
+	cmd := exec.Command("flatpak", "list", "--columns=application,branch,version")
 	cmd.Stdout = &output
 	if cmd.Run() != nil {
-		return "", "", fmt.Errorf("failed to query flathub")
+		return versions
 	}
 
-	m := flatpakRemoteVersionRe.FindStringSubmatch(output.String())
-	if len(m) < 2 {
-		return "", "", fmt.Errorf("failed to parse latest version")
+	for _, line := range strings.Split(output.String(), "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) < 3 {
+			continue
+		}
+		appID := strings.TrimSpace(fields[0])
+		branch := strings.TrimSpace(fields[1])
+		if appID == "" {
+			continue
+		}
+		versions[appID+"//"+branch] = strings.TrimSpace(fields[2])
 	}
-	latest = m[1]
+	return versions
+}
 
-	if current == latest {
-		return "", "", fmt.Errorf("already up to date")
+// FlatpakUpdateRefs updates multiple flatpak refs in one batched call.
+// Used for refs sat doesn't track in its own manifest (runtimes) - there
+// is no per-tool manifest entry to route through FlatpakUpdate for these.
+func FlatpakUpdateRefs(refs []string) error {
+	if len(refs) == 0 {
+		return nil
 	}
-
-	return current, latest, nil
+	args := append([]string{"update", "-y"}, refs...)
+	return common.RunQuiet("flatpak", args...)
 }

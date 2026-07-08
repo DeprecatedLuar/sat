@@ -3,7 +3,6 @@ package commands
 import (
 	"fmt"
 	"os/exec"
-	"sort"
 	"strings"
 
 	"github.com/DeprecatedLuar/sat/internal/manifest"
@@ -109,18 +108,12 @@ func displayGrouped(entries []manifest.Entry) {
 		groups[name] = append(groups[name], e)
 	}
 
-	sort.SliceStable(order, func(i, j int) bool {
-		ci, cj := len(groups[order[i]]), len(groups[order[j]])
-		if order[i] == "unknown" {
-			ci = 0
-		}
-		if order[j] == "unknown" {
-			cj = 0
-		}
-		return ci > cj
-	})
+	counts := make(map[string]int, len(groups))
+	for name, entries := range groups {
+		counts[name] = len(entries)
+	}
 
-	for _, name := range order {
+	for _, name := range ui.GroupedOrder(order, counts) {
 		for _, e := range groups[name] {
 			ui.DisplayToolEntry(e.Tool, e.Source, "", "")
 		}

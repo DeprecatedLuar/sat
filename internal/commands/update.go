@@ -163,9 +163,11 @@ func updateViaSource(tool, sourceStr string) (newVersion string, err error) {
 
 // checkOutdated dispatches to the source-specific outdated check for tool.
 // ok is false when the source has no CheckOutdated implementation
-// (flatpak/go, or a non-apt system package manager) or the check
-// itself failed - callers should silently skip these from a bulk scan
-// rather than treat them as errors.
+// (go, or a non-apt system package manager) or the check itself failed -
+// callers should silently skip these from a bulk scan rather than treat
+// them as errors. flatpak is not handled here - see collectFlatpakOutdated,
+// which checks all pending flatpak updates (tracked apps and untracked
+// runtimes alike) in one bulk call instead of one checkOutdated per entry.
 func checkOutdated(tool, sourceStr string) (current, latest string, ok bool) {
 	sourceType := manifest.GetSourceType(sourceStr)
 	identity := manifest.GetSourceIdentity(sourceStr)
@@ -198,9 +200,29 @@ func checkOutdated(tool, sourceStr string) (current, latest string, ok bool) {
 	return current, latest, true
 }
 
+// outdatedGroup is the grouping key for o - tracked flatpak apps and
+// untracked flatpak deps group together under one source (e.g. "flatpak"),
+// even though outdatedTag distinguishes them in the printed row.
+func outdatedGroup(o outdatedEntry) string {
+	return ui.SourceDisplay(o.source)
+}
+
+// outdatedTag is the bracketed source tag shown for o.
+func outdatedTag(o outdatedEntry) string {
+	tag := ui.SourceDisplay(o.source)
+	if o.dep {
+		tag += ":dep"
+	}
+	return tag
+}
+
 // outdatedEntry is one tool found to have a newer version available.
+// dep marks a flatpak runtime with no manifest entry of its own (identity
+// carries its app ID, since there is no tool name to look one up from).
 type outdatedEntry struct {
 	tool, source, current, latest string
+	dep                           bool
+	identity                      string
 }
 
 // updateOutdated scans the manifest for outdated tools, batched per source
@@ -225,6 +247,12 @@ func updateOutdated(sourceFilter string) error {
 		grouped[sourceType] = append(grouped[sourceType], e)
 	}
 
+	// flatpak is checked separately in bulk (see collectFlatpakOutdated) so
+	// it doesn't go through the generic per-entry checkOutdated dispatch.
+	flatpakEntries := grouped[common.SourceFlatpak]
+	delete(grouped, common.SourceFlatpak)
+	checkFlatpak := sourceFilter == "" || sourceFilter == common.SourceFlatpak
+
 	var mu sync.Mutex
 	var outdated []outdatedEntry
 	var wg sync.WaitGroup
@@ -244,6 +272,16 @@ func updateOutdated(sourceFilter string) error {
 			}
 		}(group)
 	}
+	if checkFlatpak {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fpOutdated := collectFlatpakOutdated(flatpakEntries)
+			mu.Lock()
+			outdated = append(outdated, fpOutdated...)
+			mu.Unlock()
+		}()
+	}
 	wg.Wait()
 
 	if len(outdated) == 0 {
@@ -251,12 +289,38 @@ func updateOutdated(sourceFilter string) error {
 		return nil
 	}
 
-	sort.Slice(outdated, func(i, j int) bool { return outdated[i].tool < outdated[j].tool })
+	sort.Slice(outdated, func(i, j int) bool {
+		if outdated[i].dep != outdated[j].dep {
+			return !outdated[i].dep // real apps before deps within a group
+		}
+		return outdated[i].tool < outdated[j].tool
+	})
+
+	// Group by source (largest group first, mirroring list.go's
+	// displayGrouped), rebuilding outdated in that order so the later
+	// apply loop walks the same grouped sequence it was confirmed in.
+	groups := make(map[string][]outdatedEntry)
+	var groupOrder []string
+	for _, o := range outdated {
+		group := outdatedGroup(o)
+		if _, ok := groups[group]; !ok {
+			groupOrder = append(groupOrder, group)
+		}
+		groups[group] = append(groups[group], o)
+	}
+	counts := make(map[string]int, len(groups))
+	for group, entries := range groups {
+		counts[group] = len(entries)
+	}
+	outdated = outdated[:0]
+	for _, group := range ui.GroupedOrder(groupOrder, counts) {
+		outdated = append(outdated, groups[group]...)
+	}
 
 	for _, o := range outdated {
-		display := ui.SourceDisplay(o.source)
 		color := ui.SourceColor(o.source)
-		fmt.Printf("  %-*s [%s%s%s] %s -> %s\n", ui.ToolNameWidth, o.tool, color, display, ui.Reset, o.current, o.latest)
+		fmt.Printf("  %-*s [%s%s%s] %s -> %s\n",
+			ui.ToolNameWidth, ui.TruncateName(o.tool, ui.ToolNameWidth), color, outdatedTag(o), ui.Reset, o.current, o.latest)
 	}
 
 	fmt.Printf("\nUpdate all %d? [y/N] ", len(outdated))
@@ -267,8 +331,80 @@ func updateOutdated(sourceFilter string) error {
 		return nil
 	}
 
+	var depRefs []string
 	for _, o := range outdated {
+		if o.dep {
+			depRefs = append(depRefs, o.identity)
+			continue
+		}
 		updateOne(o.tool)
 	}
+	if len(depRefs) > 0 {
+		if err := sources.FlatpakUpdateRefs(depRefs); err != nil {
+			ui.StatusFail(fmt.Sprintf("flatpak runtime update: %v", err))
+		} else {
+			ui.StatusOK(fmt.Sprintf("%d flatpak runtime(s) updated", len(depRefs)), common.SourceFlatpak)
+		}
+	}
 	return nil
+}
+
+// flatpakDisplayVersions resolves current/latest for display, since some
+// flatpak refs report no version string at all, and others report the
+// same string on both sides (flatpak's own version tag doesn't always
+// change between updates, even though remote-ls --updates confirms a
+// newer commit is pending).
+func flatpakDisplayVersions(current, latest string) (string, string) {
+	if latest == "" || current == latest {
+		latest = "update available"
+	}
+	if current == "" {
+		current = "unknown"
+	}
+	return current, latest
+}
+
+// collectFlatpakOutdated checks all pending flatpak updates in one bulk
+// call (sources.FlatpakListUpdates), then splits results against
+// flatpakEntries (sat-tracked apps): matches become ordinary tracked-tool
+// entries, unmatched refs are runtimes with no manifest entry, reported as
+// deps using flatpak's own display name. A ref's presence in the update
+// list is trusted as-is (flatpak already filtered to "needs updating"),
+// since some runtimes report no version string at all in either direction -
+// version text is display-only here, with a fallback for the blank case.
+func collectFlatpakOutdated(flatpakEntries []manifest.Entry) []outdatedEntry {
+	updates, err := sources.FlatpakListUpdates()
+	if err != nil || len(updates) == 0 {
+		return nil
+	}
+
+	tracked := make(map[string]manifest.Entry, len(flatpakEntries))
+	for _, e := range flatpakEntries {
+		tracked[manifest.GetSourceIdentity(e.Source)] = e
+	}
+	installed := sources.FlatpakInstalledVersions()
+
+	var outdated []outdatedEntry
+	for _, u := range updates {
+		if e, ok := tracked[u.AppID]; ok {
+			current := manifest.GetSourceVersion(e.Source)
+			if current == "" {
+				current = installed[u.AppID+"//"+u.Branch]
+			}
+			current, latest := flatpakDisplayVersions(current, u.Version)
+			outdated = append(outdated, outdatedEntry{tool: e.Tool, source: e.Source, current: current, latest: latest})
+			continue
+		}
+
+		current, latest := flatpakDisplayVersions(installed[u.AppID+"//"+u.Branch], u.Version)
+		outdated = append(outdated, outdatedEntry{
+			tool:     u.Name,
+			source:   common.SourceFlatpak,
+			current:  current,
+			latest:   latest,
+			dep:      true,
+			identity: u.AppID + "//" + u.Branch,
+		})
+	}
+	return outdated
 }

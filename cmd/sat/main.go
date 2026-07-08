@@ -111,7 +111,10 @@ func main() {
 	case "deps", "dependencies":
 		notImplemented("deps")
 	case "source", "src":
-		notImplemented("source")
+		if err := commands.Source(commandArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "sat: %v\n", err)
+			os.Exit(1)
+		}
 	case "version":
 		fmt.Println("sat version", version)
 	case "help", "--help", "-h":

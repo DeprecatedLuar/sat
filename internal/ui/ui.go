@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/DeprecatedLuar/sat/internal/manifest"
 )
@@ -44,6 +45,7 @@ func buildSourceTable() map[string]sourceInfo {
 		{[]string{"apt", "apk", "pacman", "dnf", "pkg", "system"}, sourceInfo{System, SystemLight, "system"}},
 		{[]string{"flatpak", "flathub"}, sourceInfo{Flatpak, FlatpakLight, "flatpak"}},
 		{[]string{"github", "gh"}, sourceInfo{Repo, RepoLight, "github"}},
+		{[]string{"huber"}, sourceInfo{Repo, RepoLight, "huber"}},
 		{[]string{"appimage"}, sourceInfo{AppImage, AppImageLight, "appimage"}},
 		{[]string{"sat"}, sourceInfo{Sat, Sat, "sat"}}, // no light variant defined, falls back to Sat
 		{[]string{"go"}, sourceInfo{Go, GoLight, "go"}},
@@ -109,6 +111,37 @@ func StatusFail(msg string) {
 // (e.g. a missing optional dependency), not just what happened internally.
 func Warn(msg string) {
 	fmt.Printf("\r[%s] %s\n", Bang, msg)
+}
+
+// GroupedOrder sorts keys (already deduplicated, in first-seen order so
+// ties stay deterministic) by descending count, with the "unknown" key
+// always sorted last regardless of its count. counts maps each key to how
+// many items share it. keys is sorted in place and also returned.
+func GroupedOrder(keys []string, counts map[string]int) []string {
+	sort.SliceStable(keys, func(i, j int) bool {
+		ci, cj := counts[keys[i]], counts[keys[j]]
+		if keys[i] == "unknown" {
+			ci = 0
+		}
+		if keys[j] == "unknown" {
+			cj = 0
+		}
+		return ci > cj
+	})
+	return keys
+}
+
+// TruncateName shortens name to width, replacing the tail with a single
+// ellipsis character when it doesn't fit, so long names never break
+// column alignment.
+func TruncateName(name string, width int) string {
+	if len(name) <= width {
+		return name
+	}
+	if width <= 1 {
+		return "…"
+	}
+	return name[:width-1] + "…"
 }
 
 // DisplayToolEntry prints a formatted tool entry with optional prefix/suffix
