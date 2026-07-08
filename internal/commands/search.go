@@ -83,7 +83,11 @@ func searchSingleSource(query, source string, filterResults bool, width int) err
 	// Execute search
 	results, err := executeSearch(sourceName, query)
 	if err != nil || len(results) == 0 {
-		fmt.Printf("No results found in %s\n", sourceName)
+		if sourceName == "pypi" {
+			fmt.Printf("No exact match on pypi for %q (pypi only supports exact package-name lookups, not fuzzy search — check the other ecosystems' results for the real name)\n", query)
+		} else {
+			fmt.Printf("No results found in %s\n", sourceName)
+		}
 		return nil
 	}
 
