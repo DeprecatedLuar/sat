@@ -235,10 +235,10 @@ func GetVersionForSource(prog, sourceType, identity string) string {
 		return sources.GetVersion(prog)
 	case "flatpak":
 		return sources.FlatpakGetVersion(identity)
+	case "uv":
+		return sources.UvGetVersion(prog)
 		// TODO: Add more sources as they're implemented in later phases
-		// case "uv": return sources.UVGetVersion(prog)
 		// case "go": return sources.GoGetVersion(prog)
-		// case "flatpak": return sources.FlatpakGetVersion(identity)
 	}
 	return ""
 }

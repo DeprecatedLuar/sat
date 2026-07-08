@@ -149,7 +149,12 @@ func updateViaSource(tool, sourceStr string) (newVersion string, err error) {
 			return "", err
 		}
 		return sources.FlatpakGetVersion(identity), nil
-	case common.SourceUV, common.SourceGo:
+	case common.SourceUV:
+		if err := sources.UvUpdate(tool); err != nil {
+			return "", err
+		}
+		return sources.UvGetVersion(tool), nil
+	case common.SourceGo:
 		return "", fmt.Errorf("%s update not yet implemented in the Go port", ui.SourceDisplay(sourceStr))
 	default:
 		return "", fmt.Errorf("no automated update for source %q", sourceType)
@@ -158,7 +163,7 @@ func updateViaSource(tool, sourceStr string) (newVersion string, err error) {
 
 // checkOutdated dispatches to the source-specific outdated check for tool.
 // ok is false when the source has no CheckOutdated implementation
-// (flatpak/uv/go, or a non-apt system package manager) or the check
+// (flatpak/go, or a non-apt system package manager) or the check
 // itself failed - callers should silently skip these from a bulk scan
 // rather than treat them as errors.
 func checkOutdated(tool, sourceStr string) (current, latest string, ok bool) {
@@ -181,6 +186,8 @@ func checkOutdated(tool, sourceStr string) (current, latest string, ok bool) {
 		current, latest, err = sources.AppImageCheckOutdated(tool, identity)
 	case common.SourceNPM:
 		current, latest, err = sources.NpmCheckOutdated(tool, identity)
+	case common.SourceUV:
+		current, latest, err = sources.UvCheckOutdated(tool)
 	default:
 		return "", "", false
 	}

@@ -83,7 +83,7 @@ func Install(args []string) error {
 }
 
 func installOne(spec, defaultSource string) {
-	tool, explicitSource := common.ParseToolSpec(spec)
+	tool, explicitSource := common.ParseToolSpec(common.NormalizeGitHubURL(spec))
 	forceSource := explicitSource
 	if forceSource == "" {
 		forceSource = defaultSource
@@ -270,7 +270,13 @@ func trySource(tool, source string) (installResult, error) {
 		}
 		return installResult{binName: binName, source: source, identity: appID, version: sources.FlatpakGetVersion(appID)}, nil
 
-	case common.SourceUV, common.SourceGo, common.SourceSat:
+	case common.SourceUV:
+		if err := sources.UvInstall(tool); err != nil {
+			return installResult{}, err
+		}
+		return installResult{binName: tool, source: source, version: sources.UvGetVersion(tool)}, nil
+
+	case common.SourceGo, common.SourceSat:
 		return installResult{}, fmt.Errorf("%s install not yet implemented in the Go port", ui.SourceDisplay(source))
 
 	default:

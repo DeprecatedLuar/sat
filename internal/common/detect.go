@@ -66,6 +66,10 @@ const (
 	PathSbin        = "/sbin/"
 )
 
+// githubURLPrefixes are stripped from install specs so a full repo URL
+// (e.g. "https://github.com/owner/repo") is treated the same as "owner/repo".
+var githubURLPrefixes = []string{"https://github.com/", "http://github.com/"}
+
 // ParseToolSpec parses tool:source syntax (e.g., "ranger:py" -> tool=ranger, source=uv)
 // Returns tool name and source type (empty string if no source specified)
 func ParseToolSpec(spec string) (name, source string) {
@@ -106,6 +110,19 @@ func ParseToolSpec(spec string) (name, source string) {
 	}
 
 	return name, source
+}
+
+// NormalizeGitHubURL reduces a full GitHub repo URL down to "owner/repo" so
+// it parses identically to a bare repo-path spec (e.g. via ParseToolSpec).
+func NormalizeGitHubURL(spec string) string {
+	for _, prefix := range githubURLPrefixes {
+		if rest, ok := strings.CutPrefix(spec, prefix); ok {
+			rest = strings.TrimSuffix(rest, "/")
+			rest = strings.TrimSuffix(rest, ".git")
+			return rest
+		}
+	}
+	return spec
 }
 
 // DetectSource detects the source of an installed tool from its binary location

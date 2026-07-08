@@ -30,9 +30,9 @@ func ScanAll() (*ScanResult, error) {
 	result.Added += scanSource(sources.NixScan)
 	result.Added += scanSource(sources.SystemScan)
 	result.Added += scanSource(sources.NpmScan)
+	result.Added += scanSource(sources.UvScan)
 
 	// Legacy directory scans for sources not yet modularized
-	result.Added += scanDir("uv", UVToolsDir())
 	result.Added += scanDir("go", GoBinDir())
 
 	// Special ecosystem scans
