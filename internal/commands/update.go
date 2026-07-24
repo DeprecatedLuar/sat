@@ -16,6 +16,14 @@ import (
 
 const updateUsage = "usage: sat update [<tool> ...] [--cargo|--brew|--nix|--apt|--gh|--appimage|--flatpak|--npm|--uv|--go]"
 
+// Source-type aliases recognized alongside their canonical common.Source*
+// constants (older manifests / scan output may still record these).
+const (
+	sourceAliasRust   = "rust"
+	sourceAliasNixOS  = "nixos"
+	sourceAliasGitHub = "github"
+)
+
 // updateFlagSource maps a CLI flag to the source type it scopes
 // sat update to (list.go's filterAliases is the read-only List equivalent).
 var updateFlagSource = map[string]string{
@@ -105,7 +113,7 @@ func updateViaSource(tool, sourceStr string) (newVersion string, err error) {
 	identity := manifest.GetSourceIdentity(sourceStr)
 
 	switch sourceType {
-	case common.SourceCargo, "rust":
+	case common.SourceCargo, sourceAliasRust:
 		if err := sources.CargoUpdate(tool); err != nil {
 			return "", err
 		}
@@ -120,14 +128,14 @@ func updateViaSource(tool, sourceStr string) (newVersion string, err error) {
 			return "", err
 		}
 		return sources.NixGetVersion(tool), nil
-	case "nixos":
+	case sourceAliasNixOS:
 		return "", fmt.Errorf("declarative NixOS package - update it via your NixOS configuration instead")
-	case "apt", "pacman", "apk", "dnf", common.SourceSystem:
+	case common.PkgManagerAPT, common.PkgManagerPacman, common.PkgManagerAPK, common.PkgManagerDNF, common.SourceSystem:
 		if err := sources.Update(tool); err != nil {
 			return "", err
 		}
 		return sources.GetVersion(tool), nil
-	case common.SourceGH, "github":
+	case common.SourceGH, sourceAliasGitHub:
 		if err := sources.GitHubUpdate(tool, identity); err != nil {
 			return "", err
 		}
@@ -174,15 +182,15 @@ func checkOutdated(tool, sourceStr string) (current, latest string, ok bool) {
 
 	var err error
 	switch sourceType {
-	case common.SourceCargo, "rust":
+	case common.SourceCargo, sourceAliasRust:
 		current, latest, err = sources.CargoCheckOutdated(tool)
 	case common.SourceBrew:
 		current, latest, err = sources.BrewCheckOutdated(tool)
-	case common.SourceNix, "nixos":
+	case common.SourceNix, sourceAliasNixOS:
 		current, latest, err = sources.NixCheckOutdated(tool, sourceType)
-	case "apt", "pacman", "apk", "dnf", common.SourceSystem:
+	case common.PkgManagerAPT, common.PkgManagerPacman, common.PkgManagerAPK, common.PkgManagerDNF, common.SourceSystem:
 		current, latest, err = sources.CheckOutdated(tool)
-	case common.SourceGH, "github":
+	case common.SourceGH, sourceAliasGitHub:
 		current, latest, err = sources.GitHubCheckOutdated(tool, identity)
 	case common.SourceAppImage:
 		current, latest, err = sources.AppImageCheckOutdated(tool, identity)

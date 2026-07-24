@@ -4,9 +4,8 @@ import "strings"
 
 const (
 	// Source string format constants
-	SourceDelimiter    = ":"
-	SourceFieldCount   = 3  // source:identity:version
-	SourceTypeIndex    = 0
+	SourceDelimiter     = ":"
+	SourceFieldCount    = 3 // source:identity:version
 	SourceIdentityIndex = 1
 	SourceVersionIndex  = 2
 )

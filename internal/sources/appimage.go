@@ -42,19 +42,19 @@ type githubReleaseResponse struct {
 // the resolved binary name for the caller to record in the manifest as
 // appimage:owner/repo.
 func AppImageInstall(repoPath string) (binName string, err error) {
-	if os.Getenv("SAT_DEBUG") != "" {
+	if os.Getenv(common.EnvSATDebug) != "" {
 		fmt.Fprintf(os.Stderr, "[debug]   trying appimage for %s\n", repoPath)
 	}
 
 	archPattern, err := appImageArchPattern()
 	if err != nil {
-		if os.Getenv("SAT_DEBUG") != "" {
+		if os.Getenv(common.EnvSATDebug) != "" {
 			fmt.Fprintf(os.Stderr, "[debug]   %s\n", err)
 		}
 		return "", err
 	}
 
-	if os.Getenv("SAT_DEBUG") != "" {
+	if os.Getenv(common.EnvSATDebug) != "" {
 		fmt.Fprintf(os.Stderr, "[debug]   fetching releases from GitHub API...\n")
 	}
 	data, err := github.APIGet("repos/" + repoPath + "/releases/latest")
@@ -71,18 +71,18 @@ func AppImageInstall(repoPath string) (binName string, err error) {
 		return "", fmt.Errorf("GitHub API rate limit exceeded (authenticate with 'gh auth login' for higher limits)")
 	}
 
-	if os.Getenv("SAT_DEBUG") != "" {
+	if os.Getenv(common.EnvSATDebug) != "" {
 		fmt.Fprintf(os.Stderr, "[debug]   found %d release assets, filtering for %s...\n", len(release.Assets), archPattern)
 	}
 	assetName, assetURL := selectAppImageAsset(release.Assets, archPattern)
 	if assetURL == "" {
-		if os.Getenv("SAT_DEBUG") != "" {
+		if os.Getenv(common.EnvSATDebug) != "" {
 			fmt.Fprintf(os.Stderr, "[debug]   no AppImage available\n")
 		}
 		return "", fmt.Errorf("no AppImage release asset found for %s", repoPath)
 	}
 
-	if os.Getenv("SAT_DEBUG") != "" {
+	if os.Getenv(common.EnvSATDebug) != "" {
 		fmt.Fprintf(os.Stderr, "[debug]   selected: %s\n", assetName)
 	}
 
@@ -92,14 +92,14 @@ func AppImageInstall(repoPath string) (binName string, err error) {
 	appimagePath := filepath.Join(appimageDir, appName)
 	symlinkPath := filepath.Join(common.LocalBin(), appName)
 
-	if os.Getenv("SAT_DEBUG") != "" {
+	if os.Getenv(common.EnvSATDebug) != "" {
 		fmt.Fprintf(os.Stderr, "[debug]   downloading to %s...\n", appimagePath)
 	}
 	if err := os.MkdirAll(appimageDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create appimages directory: %w", err)
 	}
 	if err := common.RunQuiet("curl", "-L", "-o", appimagePath, assetURL); err != nil {
-		if os.Getenv("SAT_DEBUG") != "" {
+		if os.Getenv(common.EnvSATDebug) != "" {
 			fmt.Fprintf(os.Stderr, "[debug]   download failed\n")
 		}
 		return "", fmt.Errorf("appimage download failed: %w", err)
@@ -108,7 +108,7 @@ func AppImageInstall(repoPath string) (binName string, err error) {
 		return "", fmt.Errorf("failed to make appimage executable: %w", err)
 	}
 
-	if os.Getenv("SAT_DEBUG") != "" {
+	if os.Getenv(common.EnvSATDebug) != "" {
 		fmt.Fprintf(os.Stderr, "[debug]   creating symlink %s\n", symlinkPath)
 	}
 	os.Remove(symlinkPath)
@@ -116,7 +116,7 @@ func AppImageInstall(repoPath string) (binName string, err error) {
 		return "", fmt.Errorf("failed to create symlink: %w", err)
 	}
 
-	if os.Getenv("SAT_DEBUG") != "" {
+	if os.Getenv(common.EnvSATDebug) != "" {
 		fmt.Fprintf(os.Stderr, "[debug]   appimage install successful: %s\n", appName)
 	}
 

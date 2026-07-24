@@ -49,14 +49,14 @@ func APIGet(endpoint string) ([]byte, error) {
 		if authCheck := exec.Command("gh", "auth", "status"); authCheck.Run() == nil {
 			output, err := exec.Command("gh", "api", endpoint).Output()
 			if err != nil {
-				if os.Getenv("SAT_DEBUG") != "" {
+				if os.Getenv(common.EnvSATDebug) != "" {
 					fmt.Fprintf(os.Stderr, "[debug] gh api %s failed: %v\n", endpoint, err)
 				}
 				return nil, fmt.Errorf("gh api request failed: %w", err)
 			}
 
 			if !json.Valid(output) {
-				if os.Getenv("SAT_DEBUG") != "" {
+				if os.Getenv(common.EnvSATDebug) != "" {
 					fmt.Fprintf(os.Stderr, "[debug] invalid JSON from GitHub API\n")
 				}
 				return nil, fmt.Errorf("invalid JSON from GitHub API")

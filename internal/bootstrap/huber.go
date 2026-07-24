@@ -59,7 +59,7 @@ func HuberInstall() (installedPath string, err error) {
 	}
 
 	dest := filepath.Join(common.LocalBin(), "huber")
-	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dest), dirPermissions); err != nil {
 		return "", fmt.Errorf("failed to create %s: %w", filepath.Dir(dest), err)
 	}
 
@@ -68,7 +68,7 @@ func HuberInstall() (installedPath string, err error) {
 		return "", fmt.Errorf("huber download failed: %w", err)
 	}
 
-	if err := os.Chmod(dest, 0755); err != nil {
+	if err := os.Chmod(dest, dirPermissions); err != nil {
 		return "", fmt.Errorf("failed to make huber executable: %w", err)
 	}
 

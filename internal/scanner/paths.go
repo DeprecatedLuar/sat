@@ -10,29 +10,12 @@ import (
 )
 
 const (
-	// Environment variables (EnvHome defined in exclusion.go)
-	EnvCargoHome = "CARGO_HOME"
-
-	// Default paths
-	DefaultCargoHome = ".cargo"
-	LocalShareDir    = ".local/share"
-
 	// Subdirectories
-	BinSubdir     = "bin"
-	UVToolsSubdir = "uv/tools"
+	BinSubdir = "bin"
 
 	// Tool names
 	GoTool = "go"
 )
-
-// CargoBinDir returns the cargo bin directory
-func CargoBinDir() string {
-	cargoHome := os.Getenv(EnvCargoHome)
-	if cargoHome == "" {
-		cargoHome = filepath.Join(os.Getenv(EnvHome), DefaultCargoHome)
-	}
-	return filepath.Join(cargoHome, BinSubdir)
-}
 
 // GoBinDir returns the go bin directory
 func GoBinDir() string {
@@ -55,18 +38,13 @@ func GoBinDir() string {
 	return filepath.Join(gopath, BinSubdir)
 }
 
-// UVToolsDir returns the uv tools directory
-func UVToolsDir() string {
-	return filepath.Join(os.Getenv(EnvHome), LocalShareDir, UVToolsSubdir)
-}
-
-// AppImagesDir returns the AppImage storage directory
-func AppImagesDir() string {
+// appImagesDir returns the AppImage storage directory
+func appImagesDir() string {
 	return common.AppImagesDir()
 }
 
-// LocalBin returns the ~/.local/bin directory
-func LocalBin() string {
+// localBin returns the ~/.local/bin directory
+func localBin() string {
 	return common.LocalBin()
 }
 

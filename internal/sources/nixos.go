@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// NixOSScan scans NixOS system packages from declarative configuration
-func NixOSScan() ([]Package, error) {
+// nixOSScan scans NixOS system packages from declarative configuration
+func nixOSScan() ([]Package, error) {
 	if _, err := exec.LookPath("nixos-option"); err != nil {
 		return nil, nil
 	}
@@ -56,7 +56,7 @@ func NixOSScan() ([]Package, error) {
 		}
 
 		info, err := entry.Info()
-		if err != nil || info.Mode()&0111 == 0 {
+		if err != nil || !isExecutable(info) {
 			continue
 		}
 

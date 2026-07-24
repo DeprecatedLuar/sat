@@ -131,7 +131,7 @@ func ScanFlatpak() ([]sources.Package, error) {
 
 // ScanAppImages scans AppImage directory
 func ScanAppImages() ([]sources.Package, error) {
-	appimageDir := AppImagesDir()
+	appimageDir := appImagesDir()
 	if !DirExists(appimageDir) {
 		return nil, nil
 	}
@@ -167,13 +167,13 @@ func ScanAppImages() ([]sources.Package, error) {
 
 // ScanLocalBin scans ~/.local/bin for unknown sources
 func ScanLocalBin() ([]sources.Package, error) {
-	localBin := LocalBin()
-	if !DirExists(localBin) {
+	localBinDir := localBin()
+	if !DirExists(localBinDir) {
 		return nil, nil
 	}
 
 	var packages []sources.Package
-	entries, err := os.ReadDir(localBin)
+	entries, err := os.ReadDir(localBinDir)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +184,7 @@ func ScanLocalBin() ([]sources.Package, error) {
 		}
 
 		// Skip symlinks (managed elsewhere)
-		binPath := filepath.Join(localBin, entry.Name())
+		binPath := filepath.Join(localBinDir, entry.Name())
 		if info, err := os.Lstat(binPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
 			continue
 		}

@@ -9,26 +9,26 @@ import (
 	"github.com/DeprecatedLuar/sat/internal/common"
 )
 
-// DnfInstall installs a package via dnf
-func DnfInstall(tool string) error {
-	if !DnfPkgExists(tool) {
+// dnfInstall installs a package via dnf
+func dnfInstall(tool string) error {
+	if !dnfPkgExists(tool) {
 		return fmt.Errorf("package %s not found in dnf repositories", tool)
 	}
 	return common.PkgInstall(tool, "dnf")
 }
 
-// DnfUninstall removes a dnf package
-func DnfUninstall(pkg string) error {
+// dnfUninstall removes a dnf package
+func dnfUninstall(pkg string) error {
 	return common.RunQuiet("sudo", "dnf", "remove", "-y", pkg)
 }
 
-// DnfUpdate updates a dnf package
-func DnfUpdate(tool string) error {
+// dnfUpdate updates a dnf package
+func dnfUpdate(tool string) error {
 	return common.RunQuiet("sudo", "dnf", "upgrade", "-y", tool)
 }
 
-// DnfGetVersion returns the installed version of a dnf package
-func DnfGetVersion(tool string) string {
+// dnfGetVersion returns the installed version of a dnf package
+func dnfGetVersion(tool string) string {
 	var output bytes.Buffer
 	cmd := exec.Command("dnf", "list", "installed", tool)
 	cmd.Stdout = &output
@@ -51,16 +51,16 @@ func DnfGetVersion(tool string) string {
 	return ""
 }
 
-// DnfPkgExists checks if package exists in dnf repositories
-func DnfPkgExists(pkg string) bool {
+// dnfPkgExists checks if package exists in dnf repositories
+func dnfPkgExists(pkg string) bool {
 	cmd := exec.Command("dnf", "info", pkg)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	return cmd.Run() == nil
 }
 
-// DnfSearch searches for packages in dnf repositories
-func DnfSearch(query string) ([]string, error) {
+// dnfSearch searches for packages in dnf repositories
+func dnfSearch(query string) ([]string, error) {
 	var output bytes.Buffer
 	cmd := exec.Command("dnf", "search", query)
 	cmd.Stdout = &output
@@ -122,8 +122,8 @@ func dnfOwnerOf(binPath string) string {
 	return strings.Split(strings.TrimSpace(output.String()), "-")[0]
 }
 
-// DnfScan scans user-installed Fedora/RHEL packages
-func DnfScan() ([]Package, error) {
+// dnfScan scans user-installed Fedora/RHEL packages
+func dnfScan() ([]Package, error) {
 	// Get user-installed packages
 	var output bytes.Buffer
 	cmd := exec.Command("dnf", "repoquery", "--userinstalled")
@@ -149,5 +149,5 @@ func DnfScan() ([]Package, error) {
 	}
 
 	binDirs := []string{"/usr/bin", "/usr/local/bin"}
-	return scanBinDirsOwnedBy(binDirs, "dnf", userPackages, dnfOwnerOf, DnfGetVersion), nil
+	return scanBinDirsOwnedBy(binDirs, PkgMgrDNF, userPackages, dnfOwnerOf, dnfGetVersion), nil
 }

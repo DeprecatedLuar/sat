@@ -22,6 +22,13 @@ import (
 const nixOSSearchURL = "https://aWVSALXpZv:X8gPHnzL52wFEekuxsfQ9cSh@nixos-search-7-1733963800.us-east-1.bonsaisearch.net/latest-*/_search"
 
 // NixOS search API response structures
+// nixVersionRe extracts a version-shaped substring (e.g. "1.2.3") from
+// nix-env output.
+var nixVersionRe = regexp.MustCompile(`\d[\d.]+`)
+
+// nixMaxSearchResults caps how many nix search results are returned.
+const nixMaxSearchResults = 10
+
 type nixSearchResponse struct {
 	Hits struct {
 		Hits []struct {
@@ -43,7 +50,7 @@ func NixInstall(tool string) error {
 
 	// Skip on NixOS - packages should be managed declaratively
 	if isNixOS() {
-		if os.Getenv("SAT_DEBUG") != "" {
+		if os.Getenv(common.EnvSATDebug) != "" {
 			fmt.Fprintf(os.Stderr, "[debug]   skipping nix-env on NixOS (use system config)\n")
 		}
 		return fmt.Errorf("nix packages should be managed declaratively on NixOS")
@@ -87,8 +94,7 @@ func NixGetVersion(tool string) string {
 	}
 
 	// Parse version from output
-	re := regexp.MustCompile(`\d[\d.]+`)
-	if match := re.FindString(output.String()); match != "" {
+	if match := nixVersionRe.FindString(output.String()); match != "" {
 		return match
 	}
 
@@ -151,8 +157,7 @@ func NixQueryLatestVersion(tool string) string {
 	}
 
 	// Parse version from output
-	re := regexp.MustCompile(`\d[\d.]+`)
-	if match := re.FindString(output.String()); match != "" {
+	if match := nixVersionRe.FindString(output.String()); match != "" {
 		return match
 	}
 
@@ -246,7 +251,7 @@ func NixSearch(query string) ([]string, error) {
 	cmd.Stderr = nil
 
 	if err := cmd.Run(); err != nil {
-		if os.Getenv("SAT_DEBUG") != "" {
+		if os.Getenv(common.EnvSATDebug) != "" {
 			fmt.Fprintf(os.Stderr, "[debug] failed to search NixOS packages\n")
 		}
 		return nil, fmt.Errorf("nix search API request failed")
@@ -284,8 +289,8 @@ func NixSearch(query string) ([]string, error) {
 		result := fmt.Sprintf("%s %s - %s", name, version, desc)
 		results = append(results, result)
 
-		// Limit to 10 results
-		if len(results) >= 10 {
+		// Limit to nixMaxSearchResults
+		if len(results) >= nixMaxSearchResults {
 			break
 		}
 	}
@@ -321,7 +326,7 @@ func NixScan() ([]Package, error) {
 
 		packages = append(packages, Package{
 			Name:     prog,
-			Source:   "nix",
+			Source:   common.SourceNix,
 			Identity: "",
 			Version:  version,
 		})

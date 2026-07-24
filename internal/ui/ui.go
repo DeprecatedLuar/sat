@@ -9,9 +9,9 @@ import (
 
 const (
 	// Status symbols
-	Check = "\033[0;92m✓\033[0m" // Green checkmark
-	Cross = "\033[0;91m✗\033[0m" // Red X
-	Bang  = "\033[0;93m!\033[0m" // Yellow bang
+	check = "\033[0;92m✓\033[0m" // Green checkmark
+	cross = "\033[0;91m✗\033[0m" // Red X
+	bang  = "\033[0;93m!\033[0m" // Yellow bang
 
 	// Display width constants
 	StatusWidth   = 40 // Width for status messages
@@ -98,19 +98,19 @@ func Status(msg string) {
 func StatusOK(msg, sourceStr string) {
 	display := SourceDisplay(sourceStr)
 	color := SourceColor(sourceStr)
-	fmt.Printf("\r[%s] %-*s [%s%s%s]\n", Check, MessageWidth, msg, color, display, Reset)
+	fmt.Printf("\r[%s] %-*s [%s%s%s]\n", check, MessageWidth, msg, color, display, Reset)
 }
 
 // StatusFail prints a failure message with cross
 func StatusFail(msg string) {
-	fmt.Printf("\r[%s] %s\n", Cross, msg)
+	fmt.Printf("\r[%s] %s\n", cross, msg)
 }
 
 // Warn prints a non-fatal, actionable notice. Unlike [debug]-gated logging,
 // this is always visible since it tells the user how to fix something
 // (e.g. a missing optional dependency), not just what happened internally.
 func Warn(msg string) {
-	fmt.Printf("\r[%s] %s\n", Bang, msg)
+	fmt.Printf("\r[%s] %s\n", bang, msg)
 }
 
 // GroupedOrder sorts keys (already deduplicated, in first-seen order so

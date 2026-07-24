@@ -29,13 +29,13 @@ func Install(tool string) error {
 
 	switch mgr {
 	case PkgMgrPacman:
-		return PacmanInstall(tool)
+		return pacmanInstall(tool)
 	case PkgMgrAPT:
-		return AptInstall(tool)
+		return aptInstall(tool)
 	case PkgMgrDNF:
-		return DnfInstall(tool)
+		return dnfInstall(tool)
 	case PkgMgrAPK:
-		return ApkInstall(tool)
+		return apkInstall(tool)
 	default:
 		return fmt.Errorf("unsupported package manager: %s", mgr)
 	}
@@ -50,13 +50,13 @@ func Uninstall(pkg, source string) error {
 
 	switch mgr {
 	case PkgMgrPacman:
-		return PacmanUninstall(pkg)
+		return pacmanUninstall(pkg)
 	case PkgMgrAPT:
-		return AptUninstall(pkg)
+		return aptUninstall(pkg)
 	case PkgMgrDNF:
-		return DnfUninstall(pkg)
+		return dnfUninstall(pkg)
 	case PkgMgrAPK:
-		return ApkUninstall(pkg)
+		return apkUninstall(pkg)
 	default:
 		return fmt.Errorf("unsupported package manager: %s", mgr)
 	}
@@ -71,13 +71,13 @@ func Update(tool string) error {
 
 	switch mgr {
 	case PkgMgrPacman:
-		return PacmanUpdate(tool)
+		return pacmanUpdate(tool)
 	case PkgMgrAPT:
-		return AptUpdate(tool)
+		return aptUpdate(tool)
 	case PkgMgrDNF:
-		return DnfUpdate(tool)
+		return dnfUpdate(tool)
 	case PkgMgrAPK:
-		return ApkUpdate(tool)
+		return apkUpdate(tool)
 	default:
 		return fmt.Errorf("unsupported package manager: %s", mgr)
 	}
@@ -92,13 +92,13 @@ func GetVersion(tool string) string {
 
 	switch mgr {
 	case PkgMgrPacman:
-		return PacmanGetVersion(tool)
+		return pacmanGetVersion(tool)
 	case PkgMgrAPT:
-		return AptGetVersion(tool)
+		return aptGetVersion(tool)
 	case PkgMgrDNF:
-		return DnfGetVersion(tool)
+		return dnfGetVersion(tool)
 	case PkgMgrAPK:
-		return ApkGetVersion(tool)
+		return apkGetVersion(tool)
 	default:
 		return ""
 	}
@@ -120,7 +120,7 @@ func CheckOutdated(tool string) (current, latest string, err error) {
 
 	// Only apt has reliable per-package outdated checks without sudo
 	if mgr == PkgMgrAPT {
-		return AptCheckOutdated(tool)
+		return aptCheckOutdated(tool)
 	}
 
 	// For other package managers, return error (no reliable check without sudo)
@@ -136,13 +136,13 @@ func Search(query string) ([]string, error) {
 
 	switch mgr {
 	case PkgMgrPacman:
-		return PacmanSearch(query)
+		return pacmanSearch(query)
 	case PkgMgrAPT:
-		return AptSearch(query)
+		return aptSearch(query)
 	case PkgMgrDNF:
-		return DnfSearch(query)
+		return dnfSearch(query)
 	case PkgMgrAPK:
-		return ApkSearch(query)
+		return apkSearch(query)
 	default:
 		return nil, fmt.Errorf("search not supported for %s", mgr)
 	}
@@ -157,16 +157,16 @@ func SystemScan() ([]Package, error) {
 
 	switch mgr {
 	case PkgMgrPacman:
-		return PacmanScan()
+		return pacmanScan()
 	case PkgMgrAPT:
-		return AptScan()
+		return aptScan()
 	case PkgMgrDNF:
-		return DnfScan()
+		return dnfScan()
 	case PkgMgrAPK:
-		return ApkScan()
+		return apkScan()
 	case PkgMgrNix:
 		// NixOS system packages (declarative, read-only)
-		return NixOSScan()
+		return nixOSScan()
 	default:
 		return nil, nil
 	}

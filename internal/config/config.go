@@ -47,8 +47,8 @@ type Config struct {
 	InstallOrder []string `toml:"order"`
 }
 
-// Dir returns ~/.config/sat (respecting XDG_CONFIG_HOME).
-func Dir() string {
+// dir returns ~/.config/sat (respecting XDG_CONFIG_HOME).
+func dir() string {
 	configHome := os.Getenv(EnvXDGConfigHome)
 	if configHome == "" {
 		configHome = filepath.Join(os.Getenv(EnvHome), DefaultConfigDir)
@@ -56,24 +56,24 @@ func Dir() string {
 	return filepath.Join(configHome, SatConfigDir)
 }
 
-// Path returns ~/.config/sat/config.toml (respecting XDG_CONFIG_HOME).
-func Path() string {
-	return filepath.Join(Dir(), ConfigFileName)
+// path returns ~/.config/sat/config.toml (respecting XDG_CONFIG_HOME).
+func path() string {
+	return filepath.Join(dir(), ConfigFileName)
 }
 
 // EnsureDefault writes the default config.toml if it doesn't exist yet.
 // Idempotent - safe to call on every invocation.
 func EnsureDefault() error {
-	path := Path()
-	if _, err := os.Stat(path); err == nil {
+	p := path()
+	if _, err := os.Stat(p); err == nil {
 		return nil
 	}
 
-	if err := os.MkdirAll(Dir(), DirPermissions); err != nil {
+	if err := os.MkdirAll(dir(), DirPermissions); err != nil {
 		return err
 	}
 
-	return os.WriteFile(path, []byte(defaultConfigTemplate), FilePermissions)
+	return os.WriteFile(p, []byte(defaultConfigTemplate), FilePermissions)
 }
 
 // Load reads config.toml, falling back to DefaultInstallOrder for any
@@ -81,7 +81,7 @@ func EnsureDefault() error {
 func Load() (Config, error) {
 	cfg := Config{InstallOrder: DefaultInstallOrder}
 
-	data, err := os.ReadFile(Path())
+	data, err := os.ReadFile(path())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return cfg, nil

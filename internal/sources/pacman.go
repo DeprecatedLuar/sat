@@ -15,26 +15,26 @@ const (
 	PacmanLocalBinPath = "/usr/local/bin"
 )
 
-// PacmanInstall installs a package via pacman
-func PacmanInstall(tool string) error {
-	if !PacmanPkgExists(tool) {
+// pacmanInstall installs a package via pacman
+func pacmanInstall(tool string) error {
+	if !pacmanPkgExists(tool) {
 		return fmt.Errorf("package %s not found in pacman repositories", tool)
 	}
 	return common.PkgInstall(tool, "pacman")
 }
 
-// PacmanUninstall removes a pacman package
-func PacmanUninstall(pkg string) error {
+// pacmanUninstall removes a pacman package
+func pacmanUninstall(pkg string) error {
 	return common.RunQuiet("sudo", "pacman", "-Rs", "--noconfirm", pkg)
 }
 
-// PacmanUpdate updates a pacman package
-func PacmanUpdate(tool string) error {
+// pacmanUpdate updates a pacman package
+func pacmanUpdate(tool string) error {
 	return common.RunQuiet("sudo", "pacman", "-S", "--noconfirm", tool)
 }
 
-// PacmanGetVersion returns the installed version of a pacman package
-func PacmanGetVersion(tool string) string {
+// pacmanGetVersion returns the installed version of a pacman package
+func pacmanGetVersion(tool string) string {
 	var output bytes.Buffer
 	cmd := exec.Command("pacman", "-Q", tool)
 	cmd.Stdout = &output
@@ -52,16 +52,16 @@ func PacmanGetVersion(tool string) string {
 	return ""
 }
 
-// PacmanPkgExists checks if package exists in pacman repositories
-func PacmanPkgExists(pkg string) bool {
+// pacmanPkgExists checks if package exists in pacman repositories
+func pacmanPkgExists(pkg string) bool {
 	cmd := exec.Command("pacman", "-Si", pkg)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	return cmd.Run() == nil
 }
 
-// PacmanSearch searches for packages in pacman repositories
-func PacmanSearch(query string) ([]string, error) {
+// pacmanSearch searches for packages in pacman repositories
+func pacmanSearch(query string) ([]string, error) {
 	var output bytes.Buffer
 	cmd := exec.Command("pacman", "-Ss", query)
 	cmd.Stdout = &output
@@ -120,8 +120,8 @@ func PacmanSearch(query string) ([]string, error) {
 	return results, nil
 }
 
-// PacmanScan scans explicitly-installed Arch packages
-func PacmanScan() ([]Package, error) {
+// pacmanScan scans explicitly-installed Arch packages
+func pacmanScan() ([]Package, error) {
 	if _, err := exec.LookPath("pacman"); err != nil {
 		return nil, nil
 	}
@@ -162,11 +162,11 @@ func PacmanScan() ([]Package, error) {
 		}
 
 		prog := binPath[strings.LastIndex(binPath, "/")+1:]
-		version := PacmanGetVersion(prog)
+		version := pacmanGetVersion(prog)
 
 		packages = append(packages, Package{
 			Name:     prog,
-			Source:   "pacman",
+			Source:   PkgMgrPacman,
 			Identity: "",
 			Version:  version,
 		})

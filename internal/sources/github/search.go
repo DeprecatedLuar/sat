@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+
+	"github.com/DeprecatedLuar/sat/internal/common"
 )
 
 // githubSearchLimit is the number of candidates fetched per GraphQL
@@ -54,7 +56,7 @@ func githubGraphQLSearch(query string, limit int) ([]githubCandidate, error) {
 	}
 
 	if err := exec.Command("gh", "auth", "status").Run(); err != nil {
-		if os.Getenv("SAT_DEBUG") != "" {
+		if os.Getenv(common.EnvSATDebug) != "" {
 			fmt.Fprintf(os.Stderr, "[debug] gh not authenticated, skipping GitHub search\n")
 		}
 		return nil, nil
@@ -84,7 +86,7 @@ func githubGraphQLSearch(query string, limit int) ([]githubCandidate, error) {
 	cmd.Stderr = &errOutput
 
 	if err := cmd.Run(); err != nil {
-		if os.Getenv("SAT_DEBUG") != "" {
+		if os.Getenv(common.EnvSATDebug) != "" {
 			fmt.Fprintf(os.Stderr, "[debug] GitHub GraphQL query failed: %v\n", err)
 		}
 		return nil, nil

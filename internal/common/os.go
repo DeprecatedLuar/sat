@@ -183,26 +183,6 @@ func writeOSCache(path string) error {
 	return nil
 }
 
-// PkgExists checks if a package exists in the given package manager
-func PkgExists(pkg, mgr string) bool {
-	var cmd *exec.Cmd
-
-	switch mgr {
-	case PkgManagerPacman:
-		cmd = exec.Command("pacman", "-Qi", pkg)
-	case PkgManagerAPT:
-		cmd = exec.Command("dpkg", "-s", pkg)
-	case PkgManagerDNF:
-		cmd = exec.Command("rpm", "-q", pkg)
-	case PkgManagerAPK:
-		cmd = exec.Command("apk", "info", "-e", pkg)
-	default:
-		return false
-	}
-
-	return cmd.Run() == nil
-}
-
 // PkgInstall installs a package using the given package manager
 func PkgInstall(pkg, mgr string) error {
 	var cmd *exec.Cmd
@@ -231,10 +211,6 @@ func GetPkgManager() string {
 }
 
 // GetDistro returns the detected distro
-func GetDistro() string {
-	return distro
-}
-
 // GetDistroFamily returns the detected distro family
 func GetDistroFamily() string {
 	return distroFamily

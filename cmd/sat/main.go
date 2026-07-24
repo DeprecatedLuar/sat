@@ -6,13 +6,11 @@ import (
 
 	"github.com/DeprecatedLuar/sat/internal/commands"
 	"github.com/DeprecatedLuar/sat/internal/commands/help"
+	"github.com/DeprecatedLuar/sat/internal/common"
 	"github.com/DeprecatedLuar/sat/internal/selfheal"
 )
 
 const (
-	// Environment variables
-	EnvSATDebug = "SAT_DEBUG"
-
 	// Debug flag value
 	DebugValue = "1"
 
@@ -35,12 +33,10 @@ func main() {
 	args := os.Args[1:]
 
 	// Handle global flags
-	debug := false
 	filteredArgs := []string{}
 	for _, arg := range args {
 		if arg == FlagDebug {
-			debug = true
-			os.Setenv(EnvSATDebug, DebugValue)
+			os.Setenv(common.EnvSATDebug, DebugValue)
 		} else {
 			filteredArgs = append(filteredArgs, arg)
 		}
@@ -54,9 +50,6 @@ func main() {
 
 	command := args[0]
 	commandArgs := args[1:]
-
-	_ = debug // Will be used in later phases
-	_ = commandArgs
 
 	switch command {
 	case "install", "i":

@@ -145,7 +145,7 @@ func UvScan() ([]Package, error) {
 			}
 			packages = append(packages, Package{
 				Name:     name,
-				Source:   "uv",
+				Source:   common.SourceUV,
 				Identity: "",
 				Version:  currentVersion,
 			})

@@ -45,7 +45,7 @@ func CargoInstall(tool string) error {
 	}
 
 	// Try install
-	if os.Getenv("SAT_DEBUG") != "" {
+	if os.Getenv(common.EnvSATDebug) != "" {
 		cmd := exec.Command("cargo", "install", tool)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -83,7 +83,7 @@ func CargoInstall(tool string) error {
 
 		// Try system package manager
 		mgr := common.GetPkgManager()
-		if mgr != "" && mgr != "unknown" {
+		if mgr != "" && mgr != PkgMgrUnknown {
 			if common.PkgInstall(missing, mgr) == nil {
 				fmt.Printf("[\033[0;92m✓\033[0m] %-20s [\033[38;2;120;200;255msystem\033[0m] \033[2m(build dep)\033[0m\n", missing)
 				if common.RunQuiet("cargo", "install", tool) == nil {
@@ -275,7 +275,7 @@ func CargoScan() ([]Package, error) {
 
 		packages = append(packages, Package{
 			Name:     prog,
-			Source:   "cargo",
+			Source:   common.SourceCargo,
 			Identity: "",
 			Version:  version,
 		})

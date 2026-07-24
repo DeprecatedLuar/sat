@@ -23,6 +23,9 @@ const flatpakWrapperScript = "#!/usr/bin/env bash\nexec flatpak run %s \"$@\"\n"
 // collision).
 var flatpakWrapperAppIDRe = regexp.MustCompile(`exec flatpak run (\S+)`)
 
+// flatpakMaxSearchResults caps how many flatpak search results are returned.
+const flatpakMaxSearchResults = 5
+
 // flatpakShortName extracts a short launcher name from a flatpak app ID,
 // e.g. "org.gimp.GIMP" -> "gimp". Mirrors bash's get_flatpak_shortname.
 // Used as a fallback by FlatpakToolName when no clean display name is
@@ -338,8 +341,8 @@ func FlatpakSearch(query string) ([]string, error) {
 		result := fmt.Sprintf("%s %s - %s", appID, version, desc)
 		results = append(results, result)
 
-		// Limit to 5 results
-		if len(results) >= 5 {
+		// Limit to flatpakMaxSearchResults
+		if len(results) >= flatpakMaxSearchResults {
 			break
 		}
 	}

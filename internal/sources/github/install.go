@@ -12,8 +12,8 @@ import (
 	"github.com/DeprecatedLuar/sat/internal/common"
 )
 
-// huberBinDirRel is huber's own binary directory, relative to $HOME.
-const huberBinDirRel = ".huber/bin"
+// HuberBinDirRel is huber's own binary directory, relative to $HOME.
+const HuberBinDirRel = ".huber/bin"
 
 // goCmdMainRe matches "cmd/<name>/main.go" tree paths, mirroring bash's
 // `grep -oP '^cmd/\K[^/]+(?=/main\.go$)'` (lib/sources/github.sh:284).
@@ -22,7 +22,7 @@ var goCmdMainRe = regexp.MustCompile(`^cmd/([^/]+)/main\.go$`)
 // huberBinDir returns huber's own binary directory (~/.huber/bin).
 func huberBinDir() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, huberBinDirRel)
+	return filepath.Join(home, HuberBinDirRel)
 }
 
 // repoBaseName extracts the repo part of an "owner/repo" string.

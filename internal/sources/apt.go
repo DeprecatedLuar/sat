@@ -16,26 +16,26 @@ const (
 	UpgradablePrefixLen = 17
 )
 
-// AptInstall installs a package via apt
-func AptInstall(tool string) error {
-	if !AptPkgExists(tool) {
+// aptInstall installs a package via apt
+func aptInstall(tool string) error {
+	if !aptPkgExists(tool) {
 		return fmt.Errorf("package %s not found in apt repositories", tool)
 	}
 	return common.PkgInstall(tool, "apt")
 }
 
-// AptUninstall removes an apt package
-func AptUninstall(pkg string) error {
+// aptUninstall removes an apt package
+func aptUninstall(pkg string) error {
 	return common.RunQuiet("sudo", "apt", "remove", "--purge", "-y", pkg)
 }
 
-// AptUpdate updates an apt package
-func AptUpdate(tool string) error {
+// aptUpdate updates an apt package
+func aptUpdate(tool string) error {
 	return common.RunQuiet("sudo", "apt-get", "install", "--only-upgrade", "-y", tool)
 }
 
-// AptGetVersion returns the installed version of an apt package
-func AptGetVersion(tool string) string {
+// aptGetVersion returns the installed version of an apt package
+func aptGetVersion(tool string) string {
 	var output bytes.Buffer
 	cmd := exec.Command("dpkg", "-l", tool)
 	cmd.Stdout = &output
@@ -58,16 +58,16 @@ func AptGetVersion(tool string) string {
 	return ""
 }
 
-// AptPkgExists checks if package exists in apt repositories
-func AptPkgExists(pkg string) bool {
+// aptPkgExists checks if package exists in apt repositories
+func aptPkgExists(pkg string) bool {
 	cmd := exec.Command("apt-cache", "show", pkg)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	return cmd.Run() == nil
 }
 
-// AptCheckOutdated checks if an apt package has updates available
-func AptCheckOutdated(tool string) (current, latest string, err error) {
+// aptCheckOutdated checks if an apt package has updates available
+func aptCheckOutdated(tool string) (current, latest string, err error) {
 	// Try to get current version from manifest first
 	if sourceStr := manifest.Get(tool); sourceStr != "" {
 		current = manifest.GetSourceVersion(sourceStr)
@@ -109,8 +109,8 @@ func AptCheckOutdated(tool string) (current, latest string, err error) {
 	return "", "", fmt.Errorf("no updates available")
 }
 
-// AptSearch searches for packages in apt repositories
-func AptSearch(query string) ([]string, error) {
+// aptSearch searches for packages in apt repositories
+func aptSearch(query string) ([]string, error) {
 	var output bytes.Buffer
 	cmd := exec.Command("apt", "search", query)
 	cmd.Stdout = &output
@@ -205,8 +205,8 @@ func aptOwnerOf(binPath string) string {
 	return strings.TrimSpace(parts[0])
 }
 
-// AptScan scans manually-installed Debian/Ubuntu packages
-func AptScan() ([]Package, error) {
+// aptScan scans manually-installed Debian/Ubuntu packages
+func aptScan() ([]Package, error) {
 	// Get list of manually installed packages
 	var output bytes.Buffer
 	cmd := exec.Command("apt-mark", "showmanual")
@@ -229,5 +229,5 @@ func AptScan() ([]Package, error) {
 	}
 
 	binDirs := []string{"/usr/bin", "/usr/local/bin", "/bin"}
-	return scanBinDirsOwnedBy(binDirs, "apt", manualPackages, aptOwnerOf, AptGetVersion), nil
+	return scanBinDirsOwnedBy(binDirs, PkgMgrAPT, manualPackages, aptOwnerOf, aptGetVersion), nil
 }

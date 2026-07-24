@@ -53,6 +53,7 @@ logs
 # Purpose and planning files
 vision.md
 CLAUDE.md
+AGENTS.md
 implementation-plan.md
 implementation-history.md
 .env

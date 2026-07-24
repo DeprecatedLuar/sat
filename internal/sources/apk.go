@@ -11,26 +11,26 @@ import (
 	"github.com/DeprecatedLuar/sat/internal/common"
 )
 
-// ApkInstall installs a package via apk
-func ApkInstall(tool string) error {
-	if !ApkPkgExists(tool) {
+// apkInstall installs a package via apk
+func apkInstall(tool string) error {
+	if !apkPkgExists(tool) {
 		return fmt.Errorf("package %s not found in apk repositories", tool)
 	}
 	return common.PkgInstall(tool, "apk")
 }
 
-// ApkUninstall removes an apk package
-func ApkUninstall(pkg string) error {
+// apkUninstall removes an apk package
+func apkUninstall(pkg string) error {
 	return common.RunQuiet("sudo", "apk", "del", pkg)
 }
 
-// ApkUpdate updates an apk package
-func ApkUpdate(tool string) error {
+// apkUpdate updates an apk package
+func apkUpdate(tool string) error {
 	return common.RunQuiet("sudo", "apk", "upgrade", tool)
 }
 
-// ApkGetVersion returns the installed version of an apk package
-func ApkGetVersion(tool string) string {
+// apkGetVersion returns the installed version of an apk package
+func apkGetVersion(tool string) string {
 	var output bytes.Buffer
 	cmd := exec.Command("apk", "info", "-e", tool)
 	cmd.Stdout = &output
@@ -49,8 +49,8 @@ func ApkGetVersion(tool string) string {
 	return ""
 }
 
-// ApkPkgExists checks if package exists in apk repositories
-func ApkPkgExists(pkg string) bool {
+// apkPkgExists checks if package exists in apk repositories
+func apkPkgExists(pkg string) bool {
 	// apk search returns packages matching pattern
 	cmd := exec.Command("apk", "search", "-e", pkg)
 	cmd.Stdout = nil
@@ -58,8 +58,8 @@ func ApkPkgExists(pkg string) bool {
 	return cmd.Run() == nil
 }
 
-// ApkSearch searches for packages in apk repositories
-func ApkSearch(query string) ([]string, error) {
+// apkSearch searches for packages in apk repositories
+func apkSearch(query string) ([]string, error) {
 	var output bytes.Buffer
 	cmd := exec.Command("apk", "search", "-v", query)
 	cmd.Stdout = &output
@@ -115,8 +115,8 @@ func apkOwnerOf(binPath string) string {
 	return strings.Split(fields[len(fields)-1], "-")[0]
 }
 
-// ApkScan scans explicitly-installed Alpine packages
-func ApkScan() ([]Package, error) {
+// apkScan scans explicitly-installed Alpine packages
+func apkScan() ([]Package, error) {
 	// Read /etc/apk/world for explicitly-installed packages
 	data, err := os.ReadFile("/etc/apk/world")
 	if err != nil {
@@ -136,5 +136,5 @@ func ApkScan() ([]Package, error) {
 	}
 
 	binDirs := []string{"/usr/bin", "/usr/local/bin", "/bin"}
-	return scanBinDirsOwnedBy(binDirs, "apk", worldPackages, apkOwnerOf, ApkGetVersion), nil
+	return scanBinDirsOwnedBy(binDirs, PkgMgrAPK, worldPackages, apkOwnerOf, apkGetVersion), nil
 }

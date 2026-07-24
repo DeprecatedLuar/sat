@@ -306,7 +306,7 @@ func BrewScan() ([]Package, error) {
 
 			packages = append(packages, Package{
 				Name:     prog,
-				Source:   "brew",
+				Source:   common.SourceBrew,
 				Identity: "",
 				Version:  version,
 			})

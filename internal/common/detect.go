@@ -87,7 +87,7 @@ func ParseToolSpec(spec string) (name, source string) {
 		source = SourceUV
 	case AliasRs, AliasRust:
 		source = SourceCargo
-	case AliasJs, AliasNode:
+	case AliasJs, AliasNode, SourceNPM:
 		source = SourceNPM
 	case AliasSys, AliasSystem:
 		source = SourceSystem
@@ -110,6 +110,15 @@ func ParseToolSpec(spec string) (name, source string) {
 	}
 
 	return name, source
+}
+
+// IsNpmScopedPackage reports whether spec has the shape of an npm scoped
+// package name, e.g. "@openai/codex" - a leading "@" alone isn't enough
+// (npm scopes are always "@scope/name"), so this also requires a "/".
+// Used to tell scoped npm specs apart from bare "owner/repo" GitHub paths,
+// which never start with "@".
+func IsNpmScopedPackage(spec string) bool {
+	return strings.HasPrefix(spec, "@") && strings.Contains(spec, "/")
 }
 
 // NormalizeGitHubURL reduces a full GitHub repo URL down to "owner/repo" so

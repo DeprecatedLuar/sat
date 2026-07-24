@@ -14,10 +14,6 @@ import (
 	"github.com/DeprecatedLuar/sat/internal/sources/github"
 )
 
-// huberBinDirRel is huber's own binary directory, relative to $HOME, used
-// by GitHubUninstall's best-effort symlink cleanup.
-const huberBinDirRel = ".huber/bin"
-
 // AmbiguousMatchError is re-exported so callers outside this package (e.g.
 // commands.Install) can detect an ambiguous short-name match via errors.As
 // without importing the github subpackage directly.
@@ -61,7 +57,7 @@ func GitHubInstall(input, method string) (binName, srcString string, err error) 
 		if err != nil {
 			return "", "", err
 		}
-		return bin, "appimage:" + repo, nil
+		return bin, common.SourceAppImage + manifest.SourceDelimiter + repo, nil
 	default:
 		return "", "", fmt.Errorf("unknown github install method: %s", method)
 	}
@@ -77,7 +73,7 @@ func githubInstallAuto(repo, lang string, tree []string) (binName, srcString str
 	}
 
 	if bin, err := AppImageInstall(repo); err == nil {
-		return bin, "appimage:" + repo, nil
+		return bin, common.SourceAppImage + manifest.SourceDelimiter + repo, nil
 	}
 
 	switch lang {
@@ -112,7 +108,7 @@ func GitHubSearch(query string) ([]string, error) {
 // may have created (missing files are not an error, matching bash's rm -f
 // semantics).
 func GitHubUninstall(pkg, source string) error {
-	if repo := strings.TrimPrefix(source, "gh:"); repo != source && strings.Contains(repo, "/") {
+	if repo := strings.TrimPrefix(source, common.SourceGH+manifest.SourceDelimiter); repo != source && strings.Contains(repo, "/") {
 		if _, err := exec.LookPath("huber"); err == nil {
 			if common.RunQuiet("huber", "uninstall", repo) == nil {
 				return nil
@@ -125,7 +121,7 @@ func GitHubUninstall(pkg, source string) error {
 	if err := os.Remove(filepath.Join(common.LocalBin(), pkg)); err != nil && !os.IsNotExist(err) {
 		firstErr = err
 	}
-	if err := os.Remove(filepath.Join(home, huberBinDirRel, pkg)); err != nil && !os.IsNotExist(err) && firstErr == nil {
+	if err := os.Remove(filepath.Join(home, github.HuberBinDirRel, pkg)); err != nil && !os.IsNotExist(err) && firstErr == nil {
 		firstErr = err
 	}
 	return firstErr

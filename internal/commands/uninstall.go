@@ -57,17 +57,17 @@ func removeViaSource(tool, sourceStr string) error {
 	sourceType := manifest.GetSourceType(sourceStr)
 
 	switch sourceType {
-	case common.SourceCargo, "rust":
+	case common.SourceCargo, sourceAliasRust:
 		return sources.CargoUninstall(tool, sourceStr)
 	case common.SourceBrew:
 		return sources.BrewUninstall(tool, sourceStr)
 	case common.SourceNix:
 		return sources.NixUninstall(tool, sourceStr)
-	case "nixos":
+	case sourceAliasNixOS:
 		return fmt.Errorf("declarative NixOS package - remove it from your NixOS configuration instead")
-	case "apt", "pacman", "apk", "dnf", common.SourceSystem:
+	case common.PkgManagerAPT, common.PkgManagerPacman, common.PkgManagerAPK, common.PkgManagerDNF, common.SourceSystem:
 		return sources.Uninstall(tool, sourceStr)
-	case common.SourceGH, "github":
+	case common.SourceGH, sourceAliasGitHub:
 		return sources.GitHubUninstall(tool, sourceStr)
 	case common.SourceAppImage:
 		return sources.AppImageUninstall(tool, sourceStr)

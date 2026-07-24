@@ -26,6 +26,7 @@ var installFlagSource = map[string]string{
 	"--python":  common.SourceUV,
 	"--py":      common.SourceUV,
 	"--node":    common.SourceNPM,
+	"--npm":     common.SourceNPM,
 	"--js":      common.SourceNPM,
 	"--go":      common.SourceGo,
 	"--brew":    common.SourceBrew,
@@ -89,7 +90,12 @@ func installOne(spec, defaultSource string) {
 		forceSource = defaultSource
 	}
 
-	if strings.Contains(tool, "/") {
+	if forceSource == "" && common.IsNpmScopedPackage(tool) {
+		installForced(tool, common.SourceNPM)
+		return
+	}
+
+	if forceSource == "" && strings.Contains(tool, "/") {
 		installDirectRepo(tool)
 		return
 	}

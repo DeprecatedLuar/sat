@@ -13,6 +13,10 @@ import (
 	"github.com/DeprecatedLuar/sat/internal/common"
 )
 
+// dirPermissions is used for directories and executables this package
+// creates while bootstrapping package-manager binaries.
+const dirPermissions = 0755
+
 // Relocate moves a freshly-bootstrapped binary (plus any companion
 // binaries installed alongside it, e.g. uv's "uvx") from its installer's
 // default location into common.SourcesBinDir(), then symlinks each one
@@ -25,7 +29,7 @@ import (
 // Returns the companions that were actually found and relocated.
 func Relocate(installedPath string, companionNames ...string) (moved []string, err error) {
 	sourcesDir := common.SourcesBinDir()
-	if err := os.MkdirAll(sourcesDir, 0755); err != nil {
+	if err := os.MkdirAll(sourcesDir, dirPermissions); err != nil {
 		return nil, fmt.Errorf("failed to create sources bin directory: %w", err)
 	}
 
