@@ -1,6 +1,19 @@
 package ui
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
+
+// resultIndent is the leading indent the caller (displaySourceResults)
+// prepends to every rendered result via fmt.Printf("  %s\n", ...).
+const resultIndent = 2
+
+// MinInlineDescCol is the minimum space left for a description on the name
+// line for RenderMultiline to render it inline instead of on a hanging
+// "└ " line. Keeps a long name from squeezing even a short description into
+// an orphaned fragment jammed against the right edge.
+const MinInlineDescCol = 24
 
 // nameDelimiters are the characters treated as word boundaries when matching
 // a search query against a package name (e.g. "rg" should match "ripgrep-rg"
@@ -89,6 +102,26 @@ func matchesWithDelimiters(name, query string) bool {
 	return false
 }
 
+// ParseResult splits a search result in "name version - description" format
+// into its name, version, and description parts. desc is "" when no
+// description is present.
+func ParseResult(result string) (name, version, desc string) {
+	parts := strings.SplitN(result, " - ", 2)
+	pre := parts[0]
+	if len(parts) == 2 {
+		desc = parts[1]
+	}
+
+	preParts := strings.Fields(pre)
+	if len(preParts) == 0 {
+		return "", "", desc
+	}
+
+	name = preParts[0]
+	version = strings.Join(preParts[1:], " ")
+	return name, version, desc
+}
+
 // ColorizeResult colorizes a search result's package name and dims its
 // description. Expects "name version - description" format; falls back to
 // coloring the whole string if no description is present.
@@ -98,19 +131,78 @@ func ColorizeResult(result, nameColor string) string {
 		return nameColor + result + Reset
 	}
 
-	pre := parts[0]
-	desc := parts[1]
-
-	preParts := strings.Fields(pre)
-	if len(preParts) == 0 {
+	name, version, desc := ParseResult(result)
+	if name == "" {
 		return result
 	}
 
-	name := preParts[0]
-	version := ""
-	if len(preParts) > 1 {
-		version = " " + strings.Join(preParts[1:], " ")
+	versionPart := ""
+	if version != "" {
+		versionPart = " " + version
 	}
 
-	return nameColor + name + Reset + version + Dim + " - " + desc + Reset
+	return nameColor + name + Reset + versionPart + Dim + " - " + desc + Reset
+}
+
+// wrapWords greedily word-wraps text to the given width, never breaking a
+// word mid-way. width is guarded to at least 1.
+func wrapWords(text string, width int) []string {
+	if width < 1 {
+		width = 1
+	}
+
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return []string{}
+	}
+
+	lines := []string{}
+	current := words[0]
+	for _, word := range words[1:] {
+		if len(current)+1+len(word) <= width {
+			current += " " + word
+		} else {
+			lines = append(lines, current)
+			current = word
+		}
+	}
+	lines = append(lines, current)
+	return lines
+}
+
+// RenderMultiline renders a search result as a multi-line block: the name
+// (colored nameColor) and version on the first line, and the full
+// description word-wrapped below it under a hanging "└ " indent. width is
+// the full terminal width; the wrap width is width-8 for the indent.
+// Results with no description render as just the name line.
+func RenderMultiline(result, nameColor string, width int) string {
+	name, version, desc := ParseResult(result)
+
+	versionPart := ""
+	if version != "" {
+		versionPart = " " + version
+	}
+	nameLine := nameColor + name + Reset + versionPart
+
+	if desc == "" {
+		return nameLine
+	}
+
+	available := width - resultIndent - utf8.RuneCountInString(name) - utf8.RuneCountInString(versionPart) - len(" - ")
+	if available >= MinInlineDescCol && utf8.RuneCountInString(desc) <= available {
+		return ColorizeResult(result, nameColor)
+	}
+
+	wrapWidth := width - 8
+	lines := wrapWords(desc, wrapWidth)
+
+	var b strings.Builder
+	b.WriteString(nameLine)
+	b.WriteString("\n      " + Dim + "└ " + lines[0])
+	for _, line := range lines[1:] {
+		b.WriteString("\n        " + line)
+	}
+	b.WriteString(Reset)
+
+	return b.String()
 }

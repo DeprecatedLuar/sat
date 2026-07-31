@@ -33,7 +33,7 @@ func Run(args []string) {
 		Section("Commands",
 			gohelp.Item("install|i <pkg>", "Install package(s) with optional source"),
 			gohelp.Item("source|src <pm>", "Install a package manager (huber, cargo, brew, nix)"),
-			gohelp.Item("search <program>", "Find package across sources (--all raw, --wrap full)"),
+			gohelp.Item("search <program>", "Find package across sources (--all raw, --compact single-line)"),
 			gohelp.Item("uninstall|rm <prog>", "Remove program installed via sat"),
 			gohelp.Item("shell <tool>", "Temp shell with tools, auto-cleanup on exit (requires tmux)"),
 			gohelp.Item("deps", "Install sat dependencies (tmux, wget, curl, jq)"),

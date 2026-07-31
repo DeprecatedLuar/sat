@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/DeprecatedLuar/sat/internal/common"
@@ -129,25 +130,58 @@ func Search(query string) ([]string, error) {
 
 	results := make([]string, 0, len(candidates))
 	for _, c := range candidates {
-		version := "(no releases)"
-		if c.LatestTag != "" {
-			version = c.LatestTag
-		}
-
-		desc := c.Description
-		if desc == "" {
-			desc = "(no description)"
-		} else {
-			desc = strings.Split(desc, "\n")[0]
-			if len(desc) > 50 {
-				desc = desc[:50]
-			}
-		}
-
-		results = append(results, fmt.Sprintf("%s %s - %s", c.NameWithOwner, version, desc))
+		results = append(results, formatCandidate(c))
 	}
 
 	return results, nil
+}
+
+// formatCandidate renders a githubCandidate as a single display line in
+// "owner/repo version - (★starcount) description" format. The star count is
+// a plain-text prefix on the description, dimmed along with the rest of it,
+// and is omitted entirely when zero. Only the first line of a multi-line
+// description is kept; the full line is otherwise untruncated, since
+// display-side wrapping (ui.RenderMultiline) handles width.
+func formatCandidate(c githubCandidate) string {
+	version := "unreleased"
+	if c.LatestTag != "" {
+		version = c.LatestTag
+	}
+
+	desc := c.Description
+	if desc == "" {
+		desc = "(no description)"
+	} else {
+		desc = strings.Split(desc, "\n")[0]
+	}
+
+	if c.Stars > 0 {
+		desc = fmt.Sprintf("(★%s) %s", humanizeStars(c.Stars), desc)
+	}
+
+	return fmt.Sprintf("%s %s - %s", c.NameWithOwner, version, desc)
+}
+
+// humanizeStars formats a star count for compact display: counts under 1000
+// are shown verbatim, otherwise rounded to one decimal with a k/M suffix
+// (trailing ".0" trimmed), e.g. 999 -> "999", 1200 -> "1.2k", 45231 ->
+// "45.2k", 1500000 -> "1.5M".
+func humanizeStars(n int) string {
+	switch {
+	case n < 1000:
+		return strconv.Itoa(n)
+	case n < 1_000_000:
+		return trimTrailingZero(float64(n)/1000) + "k"
+	default:
+		return trimTrailingZero(float64(n)/1_000_000) + "M"
+	}
+}
+
+// trimTrailingZero formats a float with one decimal place, dropping the
+// decimal entirely when it rounds to a whole number (2.0 -> "2").
+func trimTrailingZero(f float64) string {
+	s := strconv.FormatFloat(f, 'f', 1, 64)
+	return strings.TrimSuffix(s, ".0")
 }
 
 // SearchBestMatch resolves a short tool name to an owner/repo, mirroring

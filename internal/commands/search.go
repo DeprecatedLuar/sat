@@ -19,19 +19,19 @@ var searchSources = []string{"system", "brew", "nix", "rust", "python", "node", 
 // Search searches for packages across multiple ecosystems
 func Search(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: sat search <program>[:source] [--wrap] [--all]")
+		return fmt.Errorf("usage: sat search <program>[:source] [--compact] [--all]")
 	}
 
 	// Parse flags and query
 	var query string
 	var sourceFilter string
-	noWrap := true
+	compact := false
 	filter := true
 
 	for _, arg := range args {
 		switch arg {
-		case "--wrap":
-			noWrap = false
+		case "--compact":
+			compact = true
 		case "--all":
 			filter = false
 		default:
@@ -53,27 +53,26 @@ func Search(args []string) error {
 	}
 
 	if query == "" {
-		return fmt.Errorf("usage: sat search <program>[:source] [--wrap] [--all]")
+		return fmt.Errorf("usage: sat search <program>[:source] [--compact] [--all]")
 	}
 
 	// Get terminal width
 	termWidth := getTerminalWidth()
-	contentWidth := termWidth - 4
 
 	// Print header
 	printSearchHeader(query, termWidth)
 
 	// Single source search
 	if sourceFilter != "" {
-		return searchSingleSource(query, sourceFilter, filter, contentWidth)
+		return searchSingleSource(query, sourceFilter, filter, compact, termWidth)
 	}
 
 	// Multi-source parallel search
-	return searchAllSources(query, filter, noWrap, contentWidth)
+	return searchAllSources(query, filter, compact, termWidth)
 }
 
 // searchSingleSource searches a specific ecosystem
-func searchSingleSource(query, source string, filterResults bool, width int) error {
+func searchSingleSource(query, source string, filterResults, compact bool, termWidth int) error {
 	// Map source aliases to canonical names
 	sourceName := mapSourceAlias(source)
 	if sourceName == "" {
@@ -102,12 +101,12 @@ func searchSingleSource(query, source string, filterResults bool, width int) err
 	}
 
 	// Display results
-	displaySourceResults(sourceName, results, width)
+	displaySourceResults(sourceName, results, termWidth, compact)
 	return nil
 }
 
 // searchAllSources searches all available ecosystems in parallel
-func searchAllSources(query string, filterResults, noWrap bool, width int) error {
+func searchAllSources(query string, filterResults, compact bool, termWidth int) error {
 	// Results map and mutex
 	resultsMap := make(map[string][]string)
 	var mu sync.Mutex
@@ -146,7 +145,7 @@ func searchAllSources(query string, filterResults, noWrap bool, width int) error
 	for _, src := range searchSources {
 		if results, ok := resultsMap[src]; ok && len(results) > 0 {
 			hasResults = true
-			displaySourceResults(src, results, width)
+			displaySourceResults(src, results, termWidth, compact)
 			fmt.Println()
 		}
 	}
@@ -203,8 +202,10 @@ func debugf(format string, args ...any) {
 	}
 }
 
-// displaySourceResults formats and displays results for a source
-func displaySourceResults(source string, results []string, width int) {
+// displaySourceResults formats and displays results for a source. In compact
+// mode results are hard-truncated to a single line; otherwise each result is
+// rendered as a multi-line block with a word-wrapped description.
+func displaySourceResults(source string, results []string, termWidth int, compact bool) {
 	// Get color for source
 	sourceStr := source + "::"
 	color := ui.SourceColor(sourceStr)
@@ -215,14 +216,16 @@ func displaySourceResults(source string, results []string, width int) {
 
 	// Print each result
 	for _, result := range results {
-		// Truncate if needed
-		if len(result) > width {
-			result = result[:width]
+		if compact {
+			contentWidth := termWidth - 4
+			if len(result) > contentWidth {
+				result = result[:contentWidth]
+			}
+			fmt.Printf("  %s\n", ui.ColorizeResult(result, light))
+			continue
 		}
 
-		// Colorize and display
-		formatted := ui.ColorizeResult(result, light)
-		fmt.Printf("  %s\n", formatted)
+		fmt.Printf("  %s\n", ui.RenderMultiline(result, light, termWidth))
 	}
 }
 
