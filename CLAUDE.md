@@ -10,8 +10,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `sat` is being rewritten from bash (`lib/`) to Go (`cmd/`, `internal/`). **The Go binary is what ships and is committed at `./sat`** — the bash implementation under `lib/` is kept only as a behavioral reference during the port (same manifest format, same fallback semantics) and is not run in production anymore.
 
-Implemented in Go: `install`, `search`, `scan`, `pulverize`, `update`, `uninstall`/`remove`/`rm`, `list`/`ls`.
-Still stubs (`cmd/sat/main.go` prints "not implemented"): `shell`, `track`, `untrack`, `outdated`, `info`/`which`/`whereis`, `clone`, `pull`, `deps`/`dependencies`, `source`/`src`. `outdated`'s scan logic already exists inside `update.go` but isn't yet exposed as its own read-only command.
+Implemented in Go: `install`, `search`, `scan`, `pulverize`, `update`, `uninstall`/`remove`/`rm`, `list`/`ls`, `source`/`src`.
+Still stubs (`cmd/sat/main.go` prints "not implemented"): `shell`, `track`, `untrack`, `outdated`, `info`/`which`/`whereis`, `clone`, `pull`, `deps`/`dependencies`. `outdated`'s scan logic already exists inside `update.go` but isn't yet exposed as its own read-only command.
 
 See `implementation-plan.md` for the active phase and `implementation-history.md` for what's already landed — check both before assuming a feature is missing or planned a certain way, they're the source of truth over this file.
 
@@ -45,8 +45,15 @@ internal/
   sources/github/          # GitHub mechanics (API fetch, release/tree inspection, huber/go/python installers,
                             # fuzzy search+disambiguation); internal/sources/github.go is a thin orchestrator
                             # over this package + AppImage install, kept as two files to avoid an import cycle
+  bootstrap/               # installs the package managers themselves (brew, nix, cargo, uv, huber) via each
+                            # one's official installer script/binary — distinct from sources/, which assumes
+                            # its package manager is already present and only manages packages through it;
+                            # driven by the `sat source` command (internal/commands/source.go)
   scanner/                 # ecosystem scanning + exclusion-pattern filtering, populates manifest
-  commands/                # one file per CLI command, dispatched from main.go's switch
+  commands/                # one file per CLI command, dispatched from main.go's switch;
+                            # self_update.go is a portable, project-agnostic self-updater for the sat binary
+                            # itself (via the-satellite's installer script), distinct from `sat update`
+                            # (which updates already-installed packages)
   common/                  # binary source detection, OS-family cache, quiet command execution
   ui/                      # ANSI colors, source-to-display-name mapping, spinners
 ```
