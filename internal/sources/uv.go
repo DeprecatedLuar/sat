@@ -33,7 +33,8 @@ func uvToolList() string {
 	return output.String()
 }
 
-// uvGetPackageName finds the uv package name that owns a given binary
+// uvGetPackageName finds the uv package name that owns a given binary,
+// or "" if binary isn't found as an entry point of any installed package.
 func uvGetPackageName(binary string) string {
 	lines := strings.Split(uvToolList(), "\n")
 	var currentPkg string
@@ -53,19 +54,30 @@ func uvGetPackageName(binary string) string {
 	return ""
 }
 
+// uvResolvePackageName finds the uv package name that owns a given binary,
+// falling back to name itself when no separate alias is found (name already
+// equals the package name, or uv isn't reachable). A package can expose
+// entry-point binaries that differ from its own name (e.g. package
+// "kimi-cli" providing binaries "kimi" and "kimi-cli"), so every uv
+// subcommand that takes a package name must resolve through this first
+// rather than assume the sat-tracked tool name is the uv package name.
+func uvResolvePackageName(name string) string {
+	if pkg := uvGetPackageName(name); pkg != "" {
+		return pkg
+	}
+	return name
+}
+
 // UvUninstall removes a uv tool
 // Binary name may differ from package name - look it up first
 func UvUninstall(pkg, source string) error {
-	uvPkg := uvGetPackageName(pkg)
-	if uvPkg == "" {
-		uvPkg = pkg
-	}
-	return common.RunQuiet("uv", "tool", "uninstall", uvPkg)
+	return common.RunQuiet("uv", "tool", "uninstall", uvResolvePackageName(pkg))
 }
 
 // UvGetVersion returns the installed version of a uv tool
 func UvGetVersion(tool string) string {
-	re := regexp.MustCompile(`^` + regexp.QuoteMeta(tool) + ` v(\S+)`)
+	pkg := uvResolvePackageName(tool)
+	re := regexp.MustCompile(`^` + regexp.QuoteMeta(pkg) + ` v(\S+)`)
 	lines := strings.Split(uvToolList(), "\n")
 	for _, line := range lines {
 		if matches := re.FindStringSubmatch(line); len(matches) > 1 {
@@ -77,7 +89,7 @@ func UvGetVersion(tool string) string {
 
 // UvUpdate updates a uv tool
 func UvUpdate(tool string) error {
-	return common.RunQuiet("uv", "tool", "upgrade", tool)
+	return common.RunQuiet("uv", "tool", "upgrade", uvResolvePackageName(tool))
 }
 
 // UvQueryLatestVersion queries the latest version from PyPI
@@ -112,7 +124,11 @@ func UvCheckOutdated(tool string) (current, latest string, err error) {
 		return "", "", fmt.Errorf("package not installed")
 	}
 
-	latest = UvQueryLatestVersion(tool)
+	// The binary/tool name can differ from the PyPI package name uv
+	// actually installed (see uvResolvePackageName); query PyPI using the
+	// real package name so a same-named-but-unrelated PyPI project
+	// doesn't get mistaken for this tool's upstream.
+	latest = UvQueryLatestVersion(uvResolvePackageName(tool))
 	if latest == "" {
 		return "", "", fmt.Errorf("failed to query pypi.org")
 	}

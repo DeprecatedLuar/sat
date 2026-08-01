@@ -205,6 +205,9 @@ func checkOutdated(tool, sourceStr string) (current, latest string, ok bool) {
 	if err != nil || current == "" || latest == "" {
 		return "", "", false
 	}
+	if !common.VersionIsNewer(latest, current) {
+		return "", "", false
+	}
 	return current, latest, true
 }
 
@@ -348,7 +351,11 @@ func updateOutdated(sourceFilter string) error {
 		updateOne(o.tool)
 	}
 	if len(depRefs) > 0 {
-		if err := sources.FlatpakUpdateRefs(depRefs); err != nil {
+		label := fmt.Sprintf("%d flatpak runtimes", len(depRefs))
+		err := ui.RunWithSpinner(label, common.SourceFlatpak, func() error {
+			return sources.FlatpakUpdateRefs(depRefs)
+		})
+		if err != nil {
 			ui.StatusFail(fmt.Sprintf("flatpak runtime update: %v", err))
 		} else {
 			ui.Status(fmt.Sprintf("%d flatpak runtime(s) updated [%s]", len(depRefs), ui.SourceDisplay(common.SourceFlatpak)))
