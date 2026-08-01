@@ -2,8 +2,9 @@ package ui
 
 // ANSI color codes
 const (
-	Reset = "\033[0m"
-	Dim   = "\033[2m"
+	Reset         = "\033[0m"
+	Dim           = "\033[2m"
+	Strikethrough = "\033[9m"
 
 	// Source colors (headers)
 	Rust     = "\033[0;91m"                // Bright red - Rust/cargo

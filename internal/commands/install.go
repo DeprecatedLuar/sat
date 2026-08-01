@@ -131,7 +131,7 @@ func installDirectRepo(repoPath string) {
 	})
 
 	if err != nil {
-		ui.StatusFail(fmt.Sprintf("%s not found", repoName))
+		ui.StatusError(repoName, common.SourceGH, "not found")
 		return
 	}
 
@@ -149,7 +149,7 @@ func installForced(tool, source string) {
 
 	if err != nil {
 		if !reportIfAmbiguous(err) {
-			ui.StatusFail(fmt.Sprintf("%s not found in %s: %s", tool, ui.SourceDisplay(source), err))
+			ui.StatusError(tool, source, fmt.Sprintf("not found: %s", err))
 		}
 		return
 	}
@@ -206,7 +206,7 @@ func installFallback(tool string) {
 	}
 
 	if lastErr != nil {
-		ui.StatusFail(fmt.Sprintf("%s not found (%s: %s)", tool, ui.SourceDisplay(lastSource), lastErr))
+		ui.StatusError(tool, lastSource, lastErr.Error())
 		return
 	}
 	ui.StatusFail(fmt.Sprintf("%s not found", tool))

@@ -57,7 +57,7 @@ func Search(args []string) error {
 	}
 
 	// Get terminal width
-	termWidth := getTerminalWidth()
+	termWidth := ui.TermWidth()
 
 	// Print header
 	printSearchHeader(query, termWidth)
@@ -262,13 +262,4 @@ func printSearchHeader(query string, width int) {
 	}
 
 	fmt.Printf("%s%s\n\n", header, strings.Repeat("─", padding))
-}
-
-// getTerminalWidth returns the terminal width or 80 as fallback
-func getTerminalWidth() int {
-	width, err := common.GetTerminalWidth()
-	if err != nil || width == 0 {
-		return 80
-	}
-	return width
 }

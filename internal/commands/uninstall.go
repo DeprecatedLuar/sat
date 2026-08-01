@@ -34,8 +34,11 @@ func uninstallOne(tool string) {
 		return
 	}
 
-	if err := removeViaSource(tool, sourceStr); err != nil {
-		ui.StatusFail(fmt.Sprintf("%s: %v", tool, err))
+	err := ui.RunWithSpinner(tool, sourceStr, func() error {
+		return removeViaSource(tool, sourceStr)
+	})
+	if err != nil {
+		ui.StatusError(tool, sourceStr, err.Error())
 		return
 	}
 
@@ -43,7 +46,7 @@ func uninstallOne(tool string) {
 		fmt.Fprintf(os.Stderr, "sat: warning: %s removed but failed to update manifest: %v\n", tool, err)
 	}
 
-	ui.Status(fmt.Sprintf("%s removed", tool))
+	ui.StatusRemoved(tool, sourceStr)
 }
 
 // removeViaSource dispatches to the source-specific uninstall pipeline

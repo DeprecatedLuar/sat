@@ -3,7 +3,9 @@ package ui
 import (
 	"fmt"
 	"sort"
+	"strings"
 
+	"github.com/DeprecatedLuar/sat/internal/common"
 	"github.com/DeprecatedLuar/sat/internal/manifest"
 )
 
@@ -15,8 +17,13 @@ const (
 
 	// Display width constants
 	StatusWidth   = 40 // Width for status messages
-	MessageWidth  = 25 // Width for tool messages
 	ToolNameWidth = 20 // Width for tool names in list
+
+	// reasonIndent/reasonContinueIndent are the hanging indents for
+	// StatusError's "└ reason" line, matching RenderMultiline's convention
+	// in search.go but shifted to sit under the tool name past "[x] ".
+	reasonIndent         = "    └ "
+	reasonContinueIndent = "      "
 )
 
 // sourceInfo bundles the color, pastel light-color, and display name for a
@@ -94,14 +101,76 @@ func Status(msg string) {
 	fmt.Printf("\r%-*s\n", StatusWidth, msg)
 }
 
-// StatusOK prints a success message with checkmark and source tag
-func StatusOK(msg, sourceStr string) {
-	display := SourceDisplay(sourceStr)
-	color := SourceColor(sourceStr)
-	fmt.Printf("\r[%s] %-*s [%s%s%s]\n", check, MessageWidth, msg, color, display, Reset)
+// statusLine is the single layout for every tool status line: marker,
+// styled+padded tool name, source tag. The spinner's rotating frame and the
+// ✓/✗ completion markers all render through this, so a line never reflows
+// when its task finishes. marker and nameStyle are expected to already carry
+// their own ANSI codes (e.g. check/cross/a spinner frame color for marker;
+// SourceLight(sourceStr) for the common case, or Dim+Strikethrough to mark a
+// tool as removed, for nameStyle).
+func statusLine(marker, nameStyle, tool, sourceStr string) string {
+	return fmt.Sprintf("\r[%s] %s%-*s%s [%s%s%s]",
+		marker,
+		nameStyle, ToolNameWidth, TruncateName(tool, ToolNameWidth), Reset,
+		SourceColor(sourceStr), SourceDisplay(sourceStr), Reset)
 }
 
-// StatusFail prints a failure message with cross
+// TermWidth returns the terminal width, or 80 if it can't be determined.
+func TermWidth() int {
+	width, err := common.GetTerminalWidth()
+	if err != nil || width == 0 {
+		return 80
+	}
+	return width
+}
+
+// StatusOK prints a success line for tool via a source tagged sourceStr.
+func StatusOK(tool, sourceStr string) {
+	fmt.Println(statusLine(check, SourceLight(sourceStr), tool, sourceStr))
+}
+
+// StatusRemoved prints a success line for a completed removal: same layout
+// as StatusOK, but the tool name renders dim + struck through instead of in
+// its source color, to visually distinguish "this is gone" from "here it is".
+func StatusRemoved(tool, sourceStr string) {
+	fmt.Println(statusLine(check, Dim+Strikethrough, tool, sourceStr))
+}
+
+// formatReason word-wraps reason under a dim hanging "└ " indent (matching
+// RenderMultiline's convention in search.go), at the given width. Returns ""
+// for an empty reason, so the caller can skip printing it entirely.
+func formatReason(reason string, width int) string {
+	if reason == "" {
+		return ""
+	}
+
+	lines := wrapWords(reason, width-len(reasonContinueIndent))
+	if len(lines) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString(Dim + reasonIndent + lines[0])
+	for _, line := range lines[1:] {
+		b.WriteString("\n" + reasonContinueIndent + line)
+	}
+	b.WriteString(Reset)
+	return b.String()
+}
+
+// StatusError prints a failure line for tool via a source tagged sourceStr,
+// with reason word-wrapped underneath on a dim hanging "└ " indent. An empty
+// reason omits that line.
+func StatusError(tool, sourceStr, reason string) {
+	fmt.Println(statusLine(cross, SourceLight(sourceStr), tool, sourceStr))
+	if line := formatReason(reason, TermWidth()); line != "" {
+		fmt.Println(line)
+	}
+}
+
+// StatusFail prints a free-form failure message with cross, for cases with
+// no tool/source pair to render (e.g. an untracked tool, or a multi-line
+// error like AmbiguousMatchError that already owns its own layout).
 func StatusFail(msg string) {
 	fmt.Printf("\r[%s] %s\n", cross, msg)
 }

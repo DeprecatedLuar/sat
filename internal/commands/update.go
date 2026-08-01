@@ -91,7 +91,7 @@ func updateOne(tool string) {
 		return err
 	})
 	if err != nil {
-		ui.StatusFail(fmt.Sprintf("%s: %v", tool, err))
+		ui.StatusError(tool, sourceStr, err.Error())
 		return
 	}
 
@@ -102,7 +102,7 @@ func updateOne(tool string) {
 		fmt.Fprintf(os.Stderr, "%s failed to record %s's new version in manifest: %v\n", common.DebugPrefix, tool, err)
 	}
 
-	ui.StatusOK(fmt.Sprintf("%s updated", tool), newSourceStr)
+	ui.StatusOK(tool, newSourceStr)
 }
 
 // updateViaSource dispatches to the source-specific update function
@@ -351,7 +351,7 @@ func updateOutdated(sourceFilter string) error {
 		if err := sources.FlatpakUpdateRefs(depRefs); err != nil {
 			ui.StatusFail(fmt.Sprintf("flatpak runtime update: %v", err))
 		} else {
-			ui.StatusOK(fmt.Sprintf("%d flatpak runtime(s) updated", len(depRefs)), common.SourceFlatpak)
+			ui.Status(fmt.Sprintf("%d flatpak runtime(s) updated [%s]", len(depRefs), ui.SourceDisplay(common.SourceFlatpak)))
 		}
 	}
 	return nil
