@@ -1,6 +1,7 @@
 package common
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -68,6 +69,34 @@ func FetchJSON(url, debugCtx string) ([]byte, error) {
 	}
 
 	return body, nil
+}
+
+// PostJSON posts a JSON body and returns the response body. Some registry
+// backends (the NixOS Elasticsearch cluster) only answer queries over
+// POST, which FetchJSON cannot express.
+func PostJSON(url string, body []byte, debugCtx string) ([]byte, error) {
+	if os.Getenv(EnvSATDebug) != "" && debugCtx != "" {
+		fmt.Fprintf(os.Stderr, "%s %s: %s\n", DebugPrefix, debugCtx, url)
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("User-Agent", "sat/1.0 (https://github.com/DeprecatedLuar/sat)")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("http %d: %s", resp.StatusCode, resp.Status)
+	}
+
+	return io.ReadAll(resp.Body)
 }
 
 // winsize structure for ioctl

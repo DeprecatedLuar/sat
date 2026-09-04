@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/DeprecatedLuar/sat/internal/common"
@@ -363,4 +364,101 @@ func NpmManifestIssues() ManifestIssues {
 	}
 
 	return issues
+}
+
+// npmPackageDocument is the registry document for one package. Only the
+// latest version's fields matter for a lookup, but the registry returns
+// every version, so the map is indexed by dist-tags.
+type npmPackageDocument struct {
+	Name     string            `json:"name"`
+	DistTags map[string]string `json:"dist-tags"`
+	Versions map[string]struct {
+		Description string          `json:"description"`
+		Deprecated  string          `json:"deprecated"`
+		Homepage    string          `json:"homepage"`
+		Bin         json.RawMessage `json:"bin"`
+		Repository  json.RawMessage `json:"repository"`
+	} `json:"versions"`
+}
+
+// NpmLookup resolves an exact package name. npm's `bin` field states
+// exactly what lands on PATH, which is decisive: many popular tool names
+// are squatted by npm packages that install nothing at all.
+func NpmLookup(name string) (LookupResult, error) {
+	data, err := common.FetchJSON("https://registry.npmjs.org/"+name, "npm lookup")
+	if err != nil {
+		return LookupResult{}, ErrNoMatch
+	}
+
+	var doc npmPackageDocument
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return LookupResult{}, ErrNoMatch
+	}
+	if doc.Name != name {
+		return LookupResult{}, ErrNoMatch
+	}
+
+	version, ok := doc.Versions[doc.DistTags["latest"]]
+	if !ok {
+		return LookupResult{}, ErrNoMatch
+	}
+
+	result := LookupResult{
+		Name:        doc.Name,
+		Version:     doc.DistTags["latest"],
+		Description: version.Description,
+		Repo:        npmRepositoryURL(version.Repository),
+		Homepage:    version.Homepage,
+		Bins:        npmBinaryNames(version.Bin, doc.Name),
+		BinsKnown:   true,
+	}
+	if version.Deprecated != "" {
+		result.Dead, result.DeadReason = true, "deprecated: "+version.Deprecated
+	}
+	return result, nil
+}
+
+// npmBinaryNames normalizes npm's `bin` field, which is either a string
+// (one executable named after the package) or a name->path map.
+func npmBinaryNames(raw json.RawMessage, pkgName string) []string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+
+	var asMap map[string]string
+	if err := json.Unmarshal(raw, &asMap); err == nil {
+		names := make([]string, 0, len(asMap))
+		for name := range asMap {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		return names
+	}
+
+	var asString string
+	if err := json.Unmarshal(raw, &asString); err == nil && asString != "" {
+		return []string{pkgName}
+	}
+	return nil
+}
+
+// npmRepositoryURL normalizes npm's `repository` field, which is either a
+// bare string or an object carrying the url.
+func npmRepositoryURL(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+
+	var asObj struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(raw, &asObj); err == nil && asObj.URL != "" {
+		return asObj.URL
+	}
+
+	var asString string
+	if err := json.Unmarshal(raw, &asString); err == nil {
+		return asString
+	}
+	return ""
 }

@@ -3,10 +3,11 @@
 *.exe
 dist/
 build/
-_*
-!__*
 !*/
 !*.*
+
+# Secrets
+.env
 
 # Dependencies
 node_modules/
@@ -18,8 +19,6 @@ dist-ssr
 .tanstack/**
 .nitro
 *.local
-
-# Wrangler / Cloudflare
 .wrangler/
 .dev.vars
 
@@ -35,7 +34,6 @@ dist-ssr
 .DS_Store
 Thumbs.db
 
-
 # Temporary files
 *.tmp
 *.temp
@@ -50,15 +48,14 @@ logs
 *.mp4
 *.kra
 
-# Purpose and planning files
-vision.md
-CLAUDE.md
-AGENTS.md
-implementation-plan.md
-implementation-history.md
-.env
-*doc.md
-doc.md
+# Planning/Report/Working files
+*.md
+*.txt
+_*
+!__*
+*.local
+*.local.*
+
 
 # Whitelist
 !README.md

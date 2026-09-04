@@ -302,3 +302,70 @@ func dirExists(path string) bool {
 func isExecutable(info os.FileInfo) bool {
 	return info.Mode()&0111 != 0
 }
+
+// cargoCrateResponse is the crates.io metadata needed for an exact lookup.
+type cargoCrateResponse struct {
+	Crate struct {
+		Name           string `json:"name"`
+		Description    string `json:"description"`
+		Repository     string `json:"repository"`
+		Homepage       string `json:"homepage"`
+		DefaultVersion string `json:"default_version"`
+	} `json:"crate"`
+}
+
+// cargoVersionDetail carries the per-version facts crates.io exposes that
+// a plain crate lookup does not: which binaries the crate installs, and
+// whether the release was pulled.
+type cargoVersionDetail struct {
+	Version struct {
+		BinNames []string `json:"bin_names"`
+		Yanked   bool     `json:"yanked"`
+		Num      string   `json:"num"`
+	} `json:"version"`
+}
+
+// CargoLookup resolves an exact crate name. crates.io reports bin_names
+// per version, so cargo can prove whether a crate installs an executable
+// at all - a library crate is not an install candidate no matter how well
+// its name matches.
+func CargoLookup(name string) (LookupResult, error) {
+	data, err := common.FetchJSON("https://crates.io/api/v1/crates/"+name, "crates.io lookup")
+	if err != nil {
+		return LookupResult{}, ErrNoMatch
+	}
+
+	var meta cargoCrateResponse
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return LookupResult{}, ErrNoMatch
+	}
+	if meta.Crate.Name != name {
+		return LookupResult{}, ErrNoMatch
+	}
+
+	verData, err := common.FetchJSON(
+		"https://crates.io/api/v1/crates/"+name+"/"+meta.Crate.DefaultVersion,
+		"crates.io version")
+	if err != nil {
+		return LookupResult{}, ErrNoMatch
+	}
+
+	var detail cargoVersionDetail
+	if err := json.Unmarshal(verData, &detail); err != nil {
+		return LookupResult{}, ErrNoMatch
+	}
+
+	result := LookupResult{
+		Name:        meta.Crate.Name,
+		Version:     detail.Version.Num,
+		Description: meta.Crate.Description,
+		Repo:        meta.Crate.Repository,
+		Homepage:    meta.Crate.Homepage,
+		Bins:        detail.Version.BinNames,
+		BinsKnown:   true,
+	}
+	if detail.Version.Yanked {
+		result.Dead, result.DeadReason = true, "yanked"
+	}
+	return result, nil
+}

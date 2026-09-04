@@ -194,3 +194,52 @@ func GitHubCheckOutdated(tool, repo string) (current, latest string, err error) 
 
 	return current, latest, nil
 }
+
+// GitHubLookup adapts the github package's exact-name lookup to the shared
+// LookupResult shape. Kept here rather than in internal/sources/github to
+// preserve the existing split that avoids an import cycle.
+func GitHubLookup(name string) (LookupResult, error) {
+	res, err := github.Lookup(name)
+	if err != nil {
+		return LookupResult{}, ErrNoMatch
+	}
+
+	return LookupResult{
+		Name:        res.Repo,
+		Version:     res.Version,
+		Description: res.Description,
+		Repo:        res.URL,
+		Bins:        res.Assets,
+		BinsKnown:   true,
+		Dead:        res.Dead,
+		DeadReason:  res.DeadReason,
+	}, nil
+}
+
+// GitHubLookupByRepo adapts github.LookupByRepo to the shared LookupResult
+// shape - see GitHubLookup for why a by-name search alone isn't enough.
+func GitHubLookupByRepo(ownerRepo string) (LookupResult, error) {
+	res, err := github.LookupByRepo(ownerRepo)
+	if err != nil {
+		return LookupResult{}, ErrNoMatch
+	}
+
+	return LookupResult{
+		Name:        res.Repo,
+		Version:     res.Version,
+		Description: res.Description,
+		Repo:        res.URL,
+		Bins:        res.Assets,
+		BinsKnown:   true,
+		Dead:        res.Dead,
+		DeadReason:  res.DeadReason,
+	}, nil
+}
+
+// GitHubRepoStars reports an upstream repository's star count, whether it
+// was readable, and whether an unreadable result was a confirmed 404 (repo
+// does not exist) as opposed to a transient failure - so callers can
+// distinguish "unpopular", "unknown" and "dead".
+func GitHubRepoStars(ownerRepo string) (stars int, ok bool, notFound bool) {
+	return github.RepoStars(ownerRepo)
+}

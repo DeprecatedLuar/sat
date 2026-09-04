@@ -33,8 +33,8 @@ type nixSearchResponse struct {
 	Hits struct {
 		Hits []struct {
 			Source struct {
-				PackageAttrName   string `json:"package_attr_name"`
-				PackagePVersion   string `json:"package_pversion"`
+				PackageAttrName    string `json:"package_attr_name"`
+				PackagePVersion    string `json:"package_pversion"`
 				PackageDescription string `json:"package_description"`
 			} `json:"_source"`
 		} `json:"hits"`
@@ -333,4 +333,94 @@ func NixScan() ([]Package, error) {
 	}
 
 	return packages, nil
+}
+
+// nixLookupResponse carries the nixpkgs fields an exact lookup needs.
+// package_programs lists every executable the package installs and
+// package_mainProgram names the primary one, which makes nix - alongside
+// cargo and npm - one of the few sources that can prove binary provision.
+type nixLookupResponse struct {
+	Hits struct {
+		Hits []struct {
+			Source struct {
+				AttrName    string   `json:"package_attr_name"`
+				PVersion    string   `json:"package_pversion"`
+				Description string   `json:"package_description"`
+				Programs    []string `json:"package_programs"`
+				MainProgram string   `json:"package_mainProgram"`
+				Homepage    []string `json:"package_homepage"`
+			} `json:"_source"`
+		} `json:"hits"`
+	} `json:"hits"`
+}
+
+// nixLookupSize bounds how many hits the exact-name query returns. The
+// backing URL uses a `latest-*` index wildcard, so one attribute can match
+// in several channel indices at different versions; a handful of hits is
+// enough to pick the newest.
+const nixLookupSize = 20
+
+// NixLookup resolves an exact nixpkgs attribute name.
+//
+// nixpkgs publishes no repository field - only package_homepage, which
+// points at the project's website rather than its source - so Repo is left
+// empty and callers resolve provenance from Homepage.
+func NixLookup(name string) (LookupResult, error) {
+	payload := map[string]interface{}{
+		"query": map[string]interface{}{
+			"bool": map[string]interface{}{
+				"must": []map[string]interface{}{
+					{"term": map[string]interface{}{"type": "package"}},
+					{"term": map[string]interface{}{"package_attr_name": name}},
+				},
+			},
+		},
+		"size": nixLookupSize,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return LookupResult{}, err
+	}
+
+	data, err := common.PostJSON(nixOSSearchURL, body, "nix lookup")
+	if err != nil {
+		return LookupResult{}, ErrNoMatch
+	}
+
+	var resp nixLookupResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return LookupResult{}, ErrNoMatch
+	}
+	if len(resp.Hits.Hits) == 0 {
+		return LookupResult{}, ErrNoMatch
+	}
+
+	best := resp.Hits.Hits[0].Source
+	for _, hit := range resp.Hits.Hits[1:] {
+		if cmp, ok := common.CompareVersions(hit.Source.PVersion, best.PVersion); ok && cmp > 0 {
+			best = hit.Source
+		}
+	}
+
+	homepage := ""
+	if len(best.Homepage) > 0 {
+		homepage = best.Homepage[0]
+	}
+
+	// mainProgram names the executable users actually invoke; fall back to
+	// the full program list when a package doesn't declare one.
+	bins := best.Programs
+	if best.MainProgram != "" {
+		bins = []string{best.MainProgram}
+	}
+
+	return LookupResult{
+		Name:        best.AttrName,
+		Version:     best.PVersion,
+		Description: best.Description,
+		Homepage:    homepage,
+		Bins:        bins,
+		BinsKnown:   true,
+	}, nil
 }

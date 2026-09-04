@@ -2,6 +2,7 @@ package sources
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,6 +26,17 @@ var flatpakWrapperAppIDRe = regexp.MustCompile(`exec flatpak run (\S+)`)
 
 // flatpakMaxSearchResults caps how many flatpak search results are returned.
 const flatpakMaxSearchResults = 5
+
+// flatpakFlathubRepoURL is Flathub's official remote definition file.
+const flatpakFlathubRepoURL = "https://flathub.org/repo/flathub.flatpakrepo"
+
+// ensureFlathubRemote makes sure the flathub remote is registered before any
+// command that depends on it (search, install). --if-not-exists makes this
+// idempotent, so it's safe to call unconditionally rather than checking
+// `flatpak remotes` first.
+func ensureFlathubRemote() error {
+	return common.RunQuiet("flatpak", "remote-add", "--if-not-exists", "flathub", flatpakFlathubRepoURL)
+}
 
 // flatpakShortName extracts a short launcher name from a flatpak app ID,
 // e.g. "org.gimp.GIMP" -> "gimp". Mirrors bash's get_flatpak_shortname.
@@ -285,6 +297,9 @@ func FlatpakSearch(query string) ([]string, error) {
 	if _, err := exec.LookPath("flatpak"); err != nil {
 		return nil, nil
 	}
+	if err := ensureFlathubRemote(); err != nil {
+		return nil, fmt.Errorf("failed to configure flathub remote: %w", err)
+	}
 
 	cmd := exec.Command("flatpak", "search", query)
 	var output bytes.Buffer
@@ -357,6 +372,9 @@ func FlatpakSearch(query string) ([]string, error) {
 func FlatpakInstall(tool string) (binName, appID string, err error) {
 	if _, err := exec.LookPath("flatpak"); err != nil {
 		return "", "", fmt.Errorf("flatpak not installed")
+	}
+	if err := ensureFlathubRemote(); err != nil {
+		return "", "", fmt.Errorf("failed to configure flathub remote: %w", err)
 	}
 
 	if strings.Count(tool, ".") >= 2 {
@@ -530,4 +548,84 @@ func FlatpakUpdateRefs(refs []string) error {
 	}
 	args := append([]string{"update", "-y"}, refs...)
 	return common.RunQuiet("flatpak", args...)
+}
+
+// flatpakSearchResponse is the Flathub search result set.
+type flatpakSearchResponse struct {
+	Hits []struct {
+		AppID   string `json:"app_id"`
+		Name    string `json:"name"`
+		Summary string `json:"summary"`
+		Type    string `json:"type"`
+	} `json:"hits"`
+}
+
+// flatpakAppstreamResponse carries the lifecycle and link metadata that
+// only the per-app endpoint exposes.
+type flatpakAppstreamResponse struct {
+	IsEOL bool              `json:"is_eol"`
+	URLs  map[string]string `json:"urls"`
+}
+
+// FlatpakLookup resolves an exact application name against Flathub.
+//
+// Flathub is keyed by reverse-DNS app id, so an exact match means either
+// the display name or the id's final segment - "discord" must find
+// com.discordapp.Discord. Flathub apps are GUI applications that always
+// install something launchable, so BinsKnown stays false rather than
+// claiming a binary list this API does not provide.
+func FlatpakLookup(name string) (LookupResult, error) {
+	body, err := json.Marshal(map[string]string{"query": name})
+	if err != nil {
+		return LookupResult{}, err
+	}
+
+	data, err := common.PostJSON("https://flathub.org/api/v2/search", body, "flathub lookup")
+	if err != nil {
+		return LookupResult{}, ErrNoMatch
+	}
+
+	var search flatpakSearchResponse
+	if err := json.Unmarshal(data, &search); err != nil {
+		return LookupResult{}, ErrNoMatch
+	}
+
+	for _, hit := range search.Hits {
+		leaf := hit.AppID
+		if idx := strings.LastIndex(leaf, "."); idx != -1 {
+			leaf = leaf[idx+1:]
+		}
+		if !strings.EqualFold(hit.Name, name) && !strings.EqualFold(leaf, name) {
+			continue
+		}
+
+		result := LookupResult{
+			Name:        hit.AppID,
+			Description: hit.Summary,
+		}
+		if hit.Type != "" {
+			result.DesktopAppKnown = true
+			result.IsDesktopApp = hit.Type == "desktop-application"
+		}
+
+		appData, err := common.FetchJSON("https://flathub.org/api/v2/appstream/"+hit.AppID, "flathub appstream")
+		if err != nil {
+			return result, nil
+		}
+		var app flatpakAppstreamResponse
+		if err := json.Unmarshal(appData, &app); err != nil {
+			return result, nil
+		}
+
+		result.Homepage = app.URLs["homepage"]
+		if repo := app.URLs["vcs-browser"]; repo != "" {
+			result.Repo = repo
+		}
+		if app.IsEOL {
+			result.Dead, result.DeadReason = true, "end of life"
+		}
+		return result, nil
+	}
+
+	return LookupResult{}, ErrNoMatch
 }

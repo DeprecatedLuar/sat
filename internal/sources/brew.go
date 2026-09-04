@@ -365,3 +365,127 @@ func brewLeavesSet() map[string]bool {
 	}
 	return leaves
 }
+
+// brewLookupResponse is the formulae.brew.sh document for one formula,
+// carrying the provenance and lifecycle fields the exact lookup needs but
+// brewFormulaResponse (used by search) does not.
+type brewLookupResponse struct {
+	Name       string `json:"name"`
+	FullName   string `json:"full_name"`
+	Desc       string `json:"desc"`
+	Homepage   string `json:"homepage"`
+	Deprecated bool   `json:"deprecated"`
+	Disabled   bool   `json:"disabled"`
+	Versions   struct {
+		Stable string `json:"stable"`
+	} `json:"versions"`
+	URLs struct {
+		Stable struct {
+			URL string `json:"url"`
+		} `json:"stable"`
+	} `json:"urls"`
+}
+
+// BrewLookup resolves an exact formula name.
+//
+// The stable source URL identifies the upstream far better than homepage
+// does - brew's jq builds from github.com/jqlang/jq while its homepage is
+// jqlang.github.io - so it is preferred when it points at a repository.
+// Formulae built from a language registry (prettier from npm, yt-dlp from
+// PyPI) are resolved back to that package's own repo, otherwise they look
+// like a separate project.
+//
+// The API exposes no provided-binary list, so BinsKnown stays false.
+func BrewLookup(name string) (LookupResult, error) {
+	data, err := common.FetchJSON("https://formulae.brew.sh/api/formula/"+name+".json", "brew lookup")
+	if err != nil {
+		return LookupResult{}, ErrNoMatch
+	}
+
+	var formula brewLookupResponse
+	if err := json.Unmarshal(data, &formula); err != nil {
+		return LookupResult{}, ErrNoMatch
+	}
+	if formula.Name != name {
+		return LookupResult{}, ErrNoMatch
+	}
+
+	result := LookupResult{
+		Name:        formula.FullName,
+		Version:     formula.Versions.Stable,
+		Description: formula.Desc,
+		Homepage:    formula.Homepage,
+		Repo:        brewUpstreamRepo(formula.URLs.Stable.URL),
+	}
+	switch {
+	case formula.Disabled:
+		result.Dead, result.DeadReason = true, "disabled"
+	case formula.Deprecated:
+		result.Dead, result.DeadReason = true, "deprecated"
+	}
+	return result, nil
+}
+
+// brewUpstreamRepo turns a formula's stable source URL into a repository
+// URL when it is one, following language-registry tarballs back to the
+// package that published them.
+func brewUpstreamRepo(stableURL string) string {
+	if stableURL == "" {
+		return ""
+	}
+	if IsRepoURL(CanonicalRepo(stableURL)) {
+		return stableURL
+	}
+	if repo := registryTarballRepo(stableURL); repo != "" {
+		return repo
+	}
+	return ""
+}
+
+// registryTarballRepo resolves a tarball URL served by npm or PyPI back to
+// the repository of the package it belongs to. Formulae that repackage a
+// language-registry release would otherwise present the tarball host as
+// their upstream and never group with the same project from elsewhere.
+func registryTarballRepo(tarballURL string) string {
+	if name, ok := npmTarballPackage(tarballURL); ok {
+		if res, err := NpmLookup(name); err == nil && res.Repo != "" {
+			return res.Repo
+		}
+		return ""
+	}
+	if name, ok := pypiTarballPackage(tarballURL); ok {
+		if res, err := PyPILookup(name); err == nil && res.Repo != "" {
+			return res.Repo
+		}
+	}
+	return ""
+}
+
+// npmTarballPackage extracts the package name from a registry tarball URL
+// such as https://registry.npmjs.org/prettier/-/prettier-3.9.6.tgz.
+func npmTarballPackage(u string) (string, bool) {
+	rest, ok := strings.CutPrefix(CanonicalRepo(u), "registry.npmjs.org/")
+	if !ok {
+		return "", false
+	}
+	name, _, found := strings.Cut(rest, "/-/")
+	if !found || name == "" {
+		return "", false
+	}
+	return name, true
+}
+
+// pypiTarballPackage extracts the distribution name from a PyPI file URL
+// such as https://files.pythonhosted.org/packages/../yt_dlp-2026.7.4.tar.gz.
+// PyPI normalizes underscores to hyphens in project names.
+func pypiTarballPackage(u string) (string, bool) {
+	if !strings.Contains(u, "files.pythonhosted.org/") {
+		return "", false
+	}
+	base := u[strings.LastIndex(u, "/")+1:]
+	name, _, found := strings.Cut(base, "-")
+	if !found || name == "" {
+		return "", false
+	}
+	return strings.ReplaceAll(name, "_", "-"), true
+}

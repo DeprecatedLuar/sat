@@ -39,6 +39,84 @@ func versionComponents(v string) (parts []int, ok bool) {
 	return parts, len(parts) > 0
 }
 
+// CompareVersions reports whether a is older (-1), equal (0) or newer (1)
+// than b, and whether the comparison could be made at all.
+//
+// This is the fail-CLOSED counterpart to VersionIsNewer. Update checks
+// want to fail open, since surfacing a maybe-update is harmless. Choosing
+// between competing packages is the opposite: an undecidable comparison
+// must not hand the win to whichever side happened to be unparseable, so
+// callers fall back to an explicit preference order instead.
+//
+// Packaging noise is stripped first - Debian epochs and revisions
+// ("1:1.6-2.1+deb12u2"), Ubuntu suffixes ("1.8.1-4ubuntu2") and tag
+// prefixes ("v1.2.3", "jq-1.8.2") all describe the package, not the
+// upstream release.
+func CompareVersions(a, b string) (int, bool) {
+	aParts, aOK := comparableComponents(a)
+	bParts, bOK := comparableComponents(b)
+	if !aOK || !bOK {
+		return 0, false
+	}
+
+	for i := 0; i < len(aParts) || i < len(bParts); i++ {
+		var x, y int
+		if i < len(aParts) {
+			x = aParts[i]
+		}
+		if i < len(bParts) {
+			y = bParts[i]
+		}
+		if x != y {
+			if x > y {
+				return 1, true
+			}
+			return -1, true
+		}
+	}
+	return 0, true
+}
+
+// comparableComponents normalizes a packaged version down to the upstream
+// release numbers it describes.
+func comparableComponents(v string) ([]int, bool) {
+	v = strings.TrimSpace(v)
+	if v == "" || v == "-" {
+		return nil, false
+	}
+
+	if _, rest, found := strings.Cut(v, ":"); found {
+		v = rest // drop Debian epoch
+	}
+
+	v = strings.TrimPrefix(strings.TrimPrefix(v, "v"), "V")
+	if head, rest, found := strings.Cut(v, "-"); found && !strings.ContainsAny(head, "0123456789") {
+		v = strings.TrimPrefix(rest, "v") // "jq-1.8.2" -> "1.8.2"
+	}
+
+	// Everything from the packaging revision or build metadata onward
+	// belongs to the package, not the release being compared.
+	for _, sep := range []string{"-", "+", "~", "_"} {
+		if head, _, found := strings.Cut(v, sep); found {
+			v = head
+		}
+	}
+
+	var parts []int
+	for _, field := range strings.Split(v, ".") {
+		n, err := strconv.Atoi(field)
+		if err != nil {
+			break // a trailing rc1/beta ends the numeric prefix
+		}
+		parts = append(parts, n)
+	}
+
+	if len(parts) == 0 {
+		return nil, false
+	}
+	return parts, true
+}
+
 // VersionIsNewer reports whether latest is strictly newer than current,
 // comparing numeric components split on any non-digit separator (v-prefix
 // tolerated, e.g. "v1.2.3", "1.2.3-4"). Missing trailing components are
