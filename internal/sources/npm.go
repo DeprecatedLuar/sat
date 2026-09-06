@@ -174,6 +174,75 @@ func NpmGetVersion(tool string) string {
 	return resp.Dependencies[name].Version
 }
 
+// NpmInstalledVersions resolves the live installed version of every given
+// npm-tracked tool directly off disk - no `npm` subprocess, and critically
+// no npm prefix lookup (`npmBinDir` shells out to `npm config get prefix`,
+// ~120ms when NPM_CONFIG_PREFIX is unset, which would dominate a bulk
+// reconcile). Each binary's own bin symlink already encodes the path to its
+// package directory, so LookPath+Readlink is enough. Only present when the
+// answer is known; a tool that can't be resolved is simply absent from the
+// result, never mapped to "".
+func NpmInstalledVersions(tools []string) map[string]string {
+	versions := make(map[string]string, len(tools))
+	for _, tool := range tools {
+		pkgDir, ok := npmPackageDirFromBinary(tool)
+		if !ok {
+			continue
+		}
+		if v := npmReadPackageVersion(pkgDir); v != "" {
+			versions[tool] = v
+		}
+	}
+	return versions
+}
+
+// npmPackageDirFromBinary resolves a global npm binary's own bin symlink to
+// its package directory, e.g. binary "codex" -> symlink target
+// "../lib/node_modules/@openai/codex/bin/codex.js" -> package dir
+// "<npmBinDir>/../lib/node_modules/@openai/codex".
+func npmPackageDirFromBinary(tool string) (string, bool) {
+	binPath, err := exec.LookPath(tool)
+	if err != nil {
+		return "", false
+	}
+	return npmPackageDirFromBinPath(binPath)
+}
+
+// npmPackageDirFromBinPath is npmPackageDirFromBinary's testable core: no
+// PATH lookup, just the symlink-following logic against an already-resolved
+// binary path. Reuses npmScopedPkgRe (the same regex ResolveNpmPackageName
+// matches against) but keeps the matched prefix as a path instead of just
+// the captured package name.
+func npmPackageDirFromBinPath(binPath string) (string, bool) {
+	target, err := os.Readlink(binPath)
+	if err != nil {
+		return "", false
+	}
+	loc := npmScopedPkgRe.FindStringSubmatchIndex(target)
+	if loc == nil {
+		return "", false
+	}
+	// loc[1] is the end of the full match, which includes the trailing
+	// slash after the package name segment.
+	return filepath.Join(filepath.Dir(binPath), target[:loc[1]]), true
+}
+
+// npmReadPackageVersion reads the "version" field straight out of a global
+// npm package's own package.json.
+func npmReadPackageVersion(pkgDir string) string {
+	data, err := os.ReadFile(filepath.Join(pkgDir, "package.json"))
+	if err != nil {
+		return ""
+	}
+	var doc struct {
+		Version string `json:"version"`
+	}
+	if json.Unmarshal(data, &doc) != nil {
+		return ""
+	}
+	return doc.Version
+}
+
 // NpmQueryLatestVersion queries the latest version from the npm registry.
 func NpmQueryLatestVersion(pkg string) string {
 	url := fmt.Sprintf("https://registry.npmjs.org/%s/latest", pkg)
@@ -311,16 +380,15 @@ func NpmScan() ([]Package, error) {
 }
 
 // NpmManifestIssues examines every currently-tracked npm manifest entry and
-// reports what's stale, without mutating anything - the caller (scanner's
+// reports duplicates, without mutating anything - the caller (scanner's
 // CleanupManifest) applies prune/repair and handles display, the same
-// data-in/data-out contract NpmScan follows for new entries. Two issues are
-// detected, both stemming from before npm's own resolution logic existed:
-//   - duplicates: multiple binaries resolving to the same package (e.g.
-//     netlify-cli tracked twice, as both `netlify` and `ntl`) - all but the
-//     first-tracked are reported for pruning.
-//   - repairs: entries with no version on record because they predate
-//     version lookup - scan only ever adds new entries, so a stale blank
-//     version is otherwise never revisited.
+// data-in/data-out contract NpmScan follows for new entries. Detects
+// multiple binaries resolving to the same package (e.g. netlify-cli
+// tracked twice, as both `netlify` and `ntl`) - all but the first-tracked
+// are reported for pruning. Missing or stale versions are no longer
+// repaired here - the internal/drift package reconciles every recorded
+// version (empty or wrong) against a live query, superseding what used to
+// be a scan-only, empty-version-only backfill.
 func NpmManifestIssues() ManifestIssues {
 	var issues ManifestIssues
 
@@ -342,25 +410,6 @@ func NpmManifestIssues() ManifestIssues {
 			continue
 		}
 		seen[pkgName] = true
-
-		if manifest.GetSourceVersion(e.Source) != "" {
-			continue
-		}
-
-		version := NpmGetVersion(e.Tool)
-		if version == "" {
-			continue
-		}
-
-		identity := manifest.GetSourceIdentity(e.Source)
-		if identity == "" && pkgName != e.Tool {
-			identity = pkgName
-		}
-
-		issues.Repair = append(issues.Repair, RepairedEntry{
-			Tool:      e.Tool,
-			NewSource: manifest.BuildSourceString(common.SourceNPM, identity, version),
-		})
 	}
 
 	return issues

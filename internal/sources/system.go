@@ -108,6 +108,29 @@ func GetVersion(tool string) string {
 	}
 }
 
+// InstalledVersions resolves live versions for every given system-package
+// tool in one bulk call to whichever package manager is detected, mirroring
+// GetVersion's per-manager dispatch.
+func InstalledVersions(tools []string) map[string]string {
+	mgr := common.GetPkgManager()
+	if mgr == "" {
+		return nil
+	}
+
+	switch mgr {
+	case PkgMgrPacman:
+		return pacmanInstalledVersions(tools)
+	case PkgMgrAPT:
+		return aptInstalledVersions(tools)
+	case PkgMgrDNF:
+		return dnfInstalledVersions(tools)
+	case PkgMgrAPK:
+		return apkInstalledVersions(tools)
+	default:
+		return nil
+	}
+}
+
 // QueryLatestVersion queries the latest available version (not implemented for system packages)
 // System packages don't have a simple "latest version" query without updating repos
 func QueryLatestVersion(tool string) string {

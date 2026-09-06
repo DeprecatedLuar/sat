@@ -3,6 +3,7 @@ package scanner
 import (
 	"fmt"
 
+	"github.com/DeprecatedLuar/sat/internal/drift"
 	"github.com/DeprecatedLuar/sat/internal/manifest"
 	"github.com/DeprecatedLuar/sat/internal/sources"
 	"github.com/DeprecatedLuar/sat/internal/ui"
@@ -148,7 +149,28 @@ func CleanupManifest() (int, int) {
 		repaired += r
 	}
 
+	// sat scan is the explicit "make it right" command, so this calls
+	// Check/Apply directly rather than the TTL-gated drift.Ensure - a scan
+	// should never skip reconciling just because selfheal ran recently.
+	repaired += applyDrifts(drift.Check())
+
 	return pruned, repaired
+}
+
+// applyDrifts rewrites the manifest for every drift found in a single
+// batched write (drift.Apply), then prints each correction with the same
+// "~" marker applyManifestIssues uses for a repair.
+func applyDrifts(drifts []drift.Drift) (repaired int) {
+	changed, err := drift.Apply(drifts)
+	if err != nil || changed == 0 {
+		return 0
+	}
+	for _, d := range drifts {
+		newSource := d.NewSource()
+		color := ui.SourceColor(newSource)
+		ui.DisplayToolEntry(d.Tool, newSource, color+"~"+ui.Reset+" ", "")
+	}
+	return changed
 }
 
 // applyManifestIssues mutates the manifest and prints per the staleness a
@@ -170,4 +192,3 @@ func applyManifestIssues(issues sources.ManifestIssues) (pruned, repaired int) {
 	}
 	return
 }
-

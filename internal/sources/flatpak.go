@@ -213,8 +213,11 @@ func listInstalledFlatpakAppIDs() []string {
 
 // ReconcileWrappers keeps flatpak launcher wrappers in sync on every sat
 // invocation: creates a missing wrapper for any manifest-tracked app that
-// is also currently installed, backfills any manifest entry still missing
-// its recorded version, and removes wrappers for apps no longer installed.
+// is also currently installed, and removes wrappers for apps no longer
+// installed. Version drift/backfill is handled separately by
+// internal/drift, which corrects a wrong-or-missing recorded version in
+// one batched, TTL-gated pass instead of a per-entry `flatpak list` and
+// manifest write on every single invocation.
 // The "also currently installed" check matters: a manifest entry alone
 // (e.g. an app removed via `flatpak uninstall` outside sat, or drifted
 // from another machine) isn't enough reason to create a wrapper that would
@@ -257,12 +260,6 @@ func ReconcileWrappers() (created, pruned int) {
 				// it instead of leaving it suffixed forever.
 				if createFlatpakWrapper(natural, appID) == nil {
 					removeFlatpakWrapper(name)
-				}
-			}
-
-			if manifest.GetSourceVersion(e.Source) == "" {
-				if version := FlatpakGetVersion(appID); version != "" {
-					manifest.Add(e.Tool, manifest.BuildSourceString(common.SourceFlatpak, appID, version))
 				}
 			}
 		}
@@ -442,22 +439,45 @@ func FlatpakUpdate(tool, appID string) error {
 	return common.RunQuiet("flatpak", "update", "-y", appID)
 }
 
-// FlatpakGetVersion returns the installed version of a flatpak app.
-func FlatpakGetVersion(appID string) string {
+// flatpakAppVersions runs `flatpak list --app` once and returns every
+// installed app's version keyed by bare appID. Apps only (not runtimes) -
+// unlike FlatpakInstalledVersions' "appID//branch" keying, --app already
+// excludes runtimes, so a bare appID key here has no branch ambiguity.
+func flatpakAppVersions() map[string]string {
+	versions := make(map[string]string)
+
 	var output bytes.Buffer
 	cmd := exec.Command("flatpak", "list", "--app", "--columns=application,version")
 	cmd.Stdout = &output
 	if cmd.Run() != nil {
-		return ""
+		return versions
 	}
 
 	for _, line := range strings.Split(output.String(), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[0] == appID {
-			return fields[1]
+		if len(fields) >= 2 {
+			versions[fields[0]] = fields[1]
 		}
 	}
-	return ""
+	return versions
+}
+
+// FlatpakGetVersion returns the installed version of a flatpak app.
+func FlatpakGetVersion(appID string) string {
+	return flatpakAppVersions()[appID]
+}
+
+// FlatpakAppVersions resolves live installed versions for every given
+// flatpak app ID in a single `flatpak list --app` call.
+func FlatpakAppVersions(tools []string) map[string]string {
+	all := flatpakAppVersions()
+	versions := make(map[string]string, len(tools))
+	for _, tool := range tools {
+		if v, ok := all[tool]; ok && v != "" {
+			versions[tool] = v
+		}
+	}
+	return versions
 }
 
 // FlatpakUpdateInfo is one ref (app or runtime) flatpak itself reports as

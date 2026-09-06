@@ -52,6 +52,41 @@ func pacmanGetVersion(tool string) string {
 	return ""
 }
 
+// parsePacmanQ parses `pacman -Q` (no argument = every installed package)
+// output into a map keyed by package name.
+func parsePacmanQ(output string) map[string]string {
+	versions := make(map[string]string)
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			versions[fields[0]] = fields[1]
+		}
+	}
+	return versions
+}
+
+// pacmanInstalledVersions resolves live versions for every given
+// pacman-tracked tool in a single `pacman -Q` call.
+func pacmanInstalledVersions(tools []string) map[string]string {
+	if _, err := exec.LookPath("pacman"); err != nil {
+		return nil
+	}
+	var output bytes.Buffer
+	cmd := exec.Command("pacman", "-Q")
+	cmd.Stdout = &output
+	if cmd.Run() != nil {
+		return nil
+	}
+	all := parsePacmanQ(output.String())
+	versions := make(map[string]string, len(tools))
+	for _, tool := range tools {
+		if v, ok := all[tool]; ok && v != "" {
+			versions[tool] = v
+		}
+	}
+	return versions
+}
+
 // pacmanPkgExists checks if package exists in pacman repositories
 func pacmanPkgExists(pkg string) bool {
 	cmd := exec.Command("pacman", "-Si", pkg)

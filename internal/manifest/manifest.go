@@ -5,15 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 )
 
 const (
 	// Manifest file format constants
-	ManifestDelimiter = "="
-	ManifestFieldCount = 2  // tool=source
-	CommentPrefix     = "#"
+	ManifestDelimiter  = "="
+	ManifestFieldCount = 2 // tool=source
+	CommentPrefix      = "#"
 
 	// File permissions
 	DirPermissions  = 0755
@@ -74,16 +75,42 @@ func readEntries(path string) ([]entry, error) {
 	return entries, nil
 }
 
-// writeEntries writes entries to the manifest file in the given order
+// writeEntries writes entries to the manifest file in the given order.
+// Writes to a temp file in the same directory then renames over path, so a
+// concurrent reader never observes a truncated manifest (rename(2) is
+// atomic within one filesystem) - readEntries otherwise cannot distinguish
+// a torn write from a legitimately smaller manifest.
 func writeEntries(path string, entries []entry) error {
-	f, err := os.Create(path)
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".manifest-*")
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	tmpPath := tmp.Name()
 
 	for _, e := range entries {
-		fmt.Fprintf(f, "%s%s%s\n", e.tool, ManifestDelimiter, e.source)
+		if _, err := fmt.Fprintf(tmp, "%s%s%s\n", e.tool, ManifestDelimiter, e.source); err != nil {
+			tmp.Close()
+			os.Remove(tmpPath)
+			return err
+		}
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Chmod(tmpPath, FilePermissions); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return err
 	}
 	return nil
 }
@@ -118,6 +145,70 @@ func Add(tool, source string) error {
 	}
 
 	return writeEntries(path, entries)
+}
+
+// AddMany applies several tool=source updates in a single read-modify-write,
+// so N drift corrections cost one manifest rewrite instead of N. Per-entry
+// semantics match Add: an existing tool is updated in place (position
+// preserved), a tool not yet tracked is appended. New tools are appended in
+// sorted order so the result is deterministic. A tool already recording the
+// given source is left untouched and does not count toward the returned
+// total; when nothing actually changes, no write is performed at all.
+// Returns the number of entries changed.
+func AddMany(updates map[string]string) (int, error) {
+	if len(updates) == 0 {
+		return 0, nil
+	}
+
+	manifestMutex.Lock()
+	defer manifestMutex.Unlock()
+
+	path := ManifestPath()
+	if err := EnsureManifest(path); err != nil {
+		return 0, err
+	}
+
+	entries, err := readEntries(path)
+	if err != nil {
+		return 0, err
+	}
+
+	remaining := make(map[string]string, len(updates))
+	for tool, source := range updates {
+		remaining[tool] = source
+	}
+
+	changed := 0
+	for i := range entries {
+		source, ok := remaining[entries[i].tool]
+		if !ok {
+			continue
+		}
+		delete(remaining, entries[i].tool)
+		if entries[i].source == source {
+			continue
+		}
+		entries[i].source = source
+		changed++
+	}
+
+	if len(remaining) > 0 {
+		newTools := make([]string, 0, len(remaining))
+		for tool := range remaining {
+			newTools = append(newTools, tool)
+		}
+		sort.Strings(newTools)
+		for _, tool := range newTools {
+			entries = append(entries, entry{tool: tool, source: remaining[tool]})
+			changed++
+		}
+	}
+
+	if changed == 0 {
+		return 0, nil
+	}
+
+	return changed, writeEntries(path, entries)
 }
 
 // Get retrieves the source string for a tool

@@ -24,15 +24,10 @@ const (
 var version = "dev"
 
 func main() {
-	// Ensure sat is properly initialized
-	if err := selfheal.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "sat: initialization failed: %v\n", err)
-		os.Exit(1)
-	}
-
 	args := os.Args[1:]
 
-	// Handle global flags
+	// Handle global flags first - selfheal (and the drift reconcile it
+	// runs) must see SAT_DEBUG before it does any work, not after.
 	filteredArgs := []string{}
 	for _, arg := range args {
 		if arg == FlagDebug {
@@ -43,12 +38,22 @@ func main() {
 	}
 	args = filteredArgs
 
+	var command string
+	if len(args) > 0 {
+		command = args[0]
+	}
+
+	// Ensure sat is properly initialized
+	if err := selfheal.Run(command); err != nil {
+		fmt.Fprintf(os.Stderr, "sat: initialization failed: %v\n", err)
+		os.Exit(1)
+	}
+
 	if len(args) == 0 {
 		help.Run(args)
 		return
 	}
 
-	command := args[0]
 	commandArgs := args[1:]
 
 	switch command {
@@ -122,4 +127,3 @@ func main() {
 func notImplemented(cmd string) {
 	fmt.Printf("not implemented: %s\n", cmd)
 }
-

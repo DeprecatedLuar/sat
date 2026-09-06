@@ -122,6 +122,44 @@ func BrewGetVersion(tool string) string {
 	return ""
 }
 
+// parseBrewListVersions parses `brew list --versions` (no argument = every
+// installed formula/cask) output into a map keyed by name. A formula can
+// list more than one installed version on one line (e.g. after `brew
+// upgrade` without cleanup); the last one is what's actually linked/active.
+func parseBrewListVersions(output string) map[string]string {
+	versions := make(map[string]string)
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) >= 2 {
+			versions[fields[0]] = fields[len(fields)-1]
+		}
+	}
+	return versions
+}
+
+// BrewInstalledVersions resolves live versions for every given brew-tracked
+// tool in a single `brew list --versions` call.
+func BrewInstalledVersions(tools []string) map[string]string {
+	if _, err := exec.LookPath("brew"); err != nil {
+		return nil
+	}
+	var output bytes.Buffer
+	cmd := exec.Command("brew", "list", "--versions")
+	cmd.Stdout = &output
+	cmd.Stderr = nil
+	if cmd.Run() != nil {
+		return nil
+	}
+	all := parseBrewListVersions(output.String())
+	versions := make(map[string]string, len(tools))
+	for _, tool := range tools {
+		if v, ok := all[tool]; ok && v != "" {
+			versions[tool] = v
+		}
+	}
+	return versions
+}
+
 // BrewQueryLatestVersion queries the latest version from Homebrew API
 func BrewQueryLatestVersion(tool string) string {
 	// Try formula first

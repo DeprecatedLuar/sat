@@ -82,66 +82,98 @@ func NixUpdate(tool string) error {
 	return common.RunQuiet("nix-env", "-iA", "nixpkgs."+tool)
 }
 
-// NixGetVersion returns the installed version of a nix package
-func NixGetVersion(tool string) string {
-	var output bytes.Buffer
-	cmd := exec.Command("nix-env", "-q", tool)
-	cmd.Stdout = &output
-	cmd.Stderr = nil
+// nixOSBinDir is where NixOS's system profile exposes every
+// declaratively-installed package's binaries.
+const nixOSBinDir = "/run/current-system/sw/bin"
 
-	if cmd.Run() != nil {
-		return ""
-	}
-
-	// Parse version from output
-	if match := nixVersionRe.FindString(output.String()); match != "" {
-		return match
-	}
-
-	return ""
+// nixProfileDir returns the current user's nix-env profile bin directory.
+func nixProfileDir() string {
+	return filepath.Join(os.Getenv("HOME"), ".nix-profile/bin")
 }
 
-// NixOSGetVersion returns the installed version of a NixOS system package
-func NixOSGetVersion(tool string) string {
-	binPath := filepath.Join("/run/current-system/sw/bin", tool)
+// NixGetVersion returns the installed version of a nix-env (user profile)
+// package by following its bin symlink into the store - no subprocess.
+// Matches how NixScan already discovers these binaries.
+func NixGetVersion(tool string) string {
+	return nixProfileVersion(filepath.Join(nixProfileDir(), tool))
+}
 
-	// Check if binary exists
-	if _, err := os.Stat(binPath); err != nil {
-		return ""
+// NixInstalledVersions resolves live versions for every given nix-typed
+// (user profile) tool. Each lookup is a stat + symlink read - no subprocess.
+func NixInstalledVersions(tools []string) map[string]string {
+	versions := make(map[string]string, len(tools))
+	for _, tool := range tools {
+		if v := NixGetVersion(tool); v != "" {
+			versions[tool] = v
+		}
 	}
+	return versions
+}
 
-	// Follow symlink to nix store
-	storePath, err := filepath.EvalSymlinks(binPath)
-	if err != nil {
-		return ""
-	}
+// nixStoreVersionRe extracts the trailing version segment of a nix store
+// derivation name (the part after the hash prefix has been stripped), e.g.
+// "android-tools-35.0.2" -> "35.0.2".
+var nixStoreVersionRe = regexp.MustCompile(`(^|-)(\d+\.[\d.]+\d+|[\d.]+)$`)
 
-	// Extract derivation name from store path
-	// Example: /nix/store/hash-android-tools-35.0.2/bin/adb → android-tools-35.0.2
+// nixStoreVersion extracts the version segment of a nix store path, e.g.
+// "/nix/store/hash-android-tools-35.0.2/bin/adb" -> "35.0.2". Pure string
+// parsing, no filesystem or subprocess access - the caller resolves the
+// symlink first (see nixProfileVersion), which is what makes both
+// NixOSGetVersion and NixGetVersion free of any subprocess.
+func nixStoreVersion(storePath string) string {
 	parts := strings.Split(storePath, "/")
 	if len(parts) < 4 {
 		return ""
 	}
 
-	// Get store entry (e.g., "hash-android-tools-35.0.2")
+	// Store entry, e.g. "hash-android-tools-35.0.2"
 	storeEntry := parts[3]
 
-	// Extract derivation name (strip hash prefix)
-	// hash-NAME-VERSION → NAME-VERSION
+	// Strip hash prefix: hash-NAME-VERSION -> NAME-VERSION
 	dashIdx := strings.Index(storeEntry, "-")
 	if dashIdx == -1 {
 		return ""
 	}
 	deriv := storeEntry[dashIdx+1:]
 
-	// Extract version (last dash-separated segment starting with digit)
-	// android-tools-35.0.2 → 35.0.2
-	re := regexp.MustCompile(`(^|-)(\d+\.[\d.]+\d+|[\d.]+)$`)
-	if matches := re.FindStringSubmatch(deriv); len(matches) > 2 {
+	if matches := nixStoreVersionRe.FindStringSubmatch(deriv); len(matches) > 2 {
 		return strings.TrimPrefix(matches[2], "-")
 	}
-
 	return ""
+}
+
+// nixProfileVersion resolves a binary's version by following its symlink
+// into the nix store - no subprocess. binPath is the full path to the
+// binary inside a profile's bin directory (NixOS's system profile, or a
+// user's nix-env profile).
+func nixProfileVersion(binPath string) string {
+	if _, err := os.Stat(binPath); err != nil {
+		return ""
+	}
+	storePath, err := filepath.EvalSymlinks(binPath)
+	if err != nil {
+		return ""
+	}
+	return nixStoreVersion(storePath)
+}
+
+// NixOSGetVersion returns the installed version of a NixOS system package
+func NixOSGetVersion(tool string) string {
+	return nixProfileVersion(filepath.Join(nixOSBinDir, tool))
+}
+
+// NixOSInstalledVersions resolves live versions for every given NixOS-typed
+// tool. Each lookup is a stat + symlink read against
+// /run/current-system/sw/bin - no subprocess, so this is cheap even across
+// the entire manifest.
+func NixOSInstalledVersions(tools []string) map[string]string {
+	versions := make(map[string]string, len(tools))
+	for _, tool := range tools {
+		if v := NixOSGetVersion(tool); v != "" {
+			versions[tool] = v
+		}
+	}
+	return versions
 }
 
 // NixQueryLatestVersion queries the latest version (not implemented)
@@ -300,7 +332,7 @@ func NixSearch(query string) ([]string, error) {
 
 // NixScan scans for installed nix user profile packages
 func NixScan() ([]Package, error) {
-	nixProfile := filepath.Join(os.Getenv("HOME"), ".nix-profile/bin")
+	nixProfile := nixProfileDir()
 	if !dirExists(nixProfile) {
 		return nil, nil
 	}

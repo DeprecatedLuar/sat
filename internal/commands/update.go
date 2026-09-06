@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/DeprecatedLuar/sat/internal/common"
+	"github.com/DeprecatedLuar/sat/internal/drift"
 	"github.com/DeprecatedLuar/sat/internal/manifest"
 	"github.com/DeprecatedLuar/sat/internal/sources"
 	"github.com/DeprecatedLuar/sat/internal/ui"
@@ -48,6 +49,15 @@ var updateFlagSource = map[string]string{
 func HandleUpdate(args []string, version, repo string) error {
 	if len(args) == 1 && args[0] == "sat" {
 		return HandleSelfUpdate(version, repo)
+	}
+
+	// Force a reconcile regardless of the TTL, so a tool updated outside
+	// sat since the last reconcile doesn't get reported as outdated (or
+	// pointlessly re-updated) against a stale recorded version. Silent -
+	// drift isn't user-actionable and this command already owns the
+	// terminal with spinners.
+	if _, err := drift.Reconcile(); err != nil && os.Getenv(common.EnvSATDebug) != "" {
+		fmt.Fprintf(os.Stderr, "%s drift reconcile: %v\n", common.DebugPrefix, err)
 	}
 
 	var tools []string

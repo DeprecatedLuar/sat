@@ -58,6 +58,44 @@ func aptGetVersion(tool string) string {
 	return ""
 }
 
+// parseDpkgList parses `dpkg -l` (no argument = every installed package)
+// output into a map keyed by package name.
+func parseDpkgList(output string) map[string]string {
+	versions := make(map[string]string)
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.HasPrefix(line, "ii") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 3 {
+			versions[fields[1]] = fields[2]
+		}
+	}
+	return versions
+}
+
+// aptInstalledVersions resolves live versions for every given apt-tracked
+// tool in a single `dpkg -l` call.
+func aptInstalledVersions(tools []string) map[string]string {
+	if _, err := exec.LookPath("dpkg"); err != nil {
+		return nil
+	}
+	var output bytes.Buffer
+	cmd := exec.Command("dpkg", "-l")
+	cmd.Stdout = &output
+	if cmd.Run() != nil {
+		return nil
+	}
+	all := parseDpkgList(output.String())
+	versions := make(map[string]string, len(tools))
+	for _, tool := range tools {
+		if v, ok := all[tool]; ok && v != "" {
+			versions[tool] = v
+		}
+	}
+	return versions
+}
+
 // aptPkgExists checks if package exists in apt repositories
 func aptPkgExists(pkg string) bool {
 	cmd := exec.Command("apt-cache", "show", pkg)

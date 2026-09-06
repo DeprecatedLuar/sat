@@ -107,8 +107,8 @@ func CargoUninstall(pkg, source string) error {
 	return common.RunQuiet("cargo", "uninstall", crate)
 }
 
-// getCrateName finds the crate name for a given binary
-func getCrateName(binary string) string {
+// cargoInstallList runs `cargo install --list` and returns its stdout.
+func cargoInstallList() string {
 	var output bytes.Buffer
 	cmd := exec.Command("cargo", "install", "--list")
 	cmd.Stdout = &output
@@ -117,30 +117,96 @@ func getCrateName(binary string) string {
 	if cmd.Run() != nil {
 		return ""
 	}
+	return output.String()
+}
 
-	// Parse output to find crate name
-	// Format:
-	//   crate-name v1.0.0:
-	//       binary1
-	//       binary2
-	lines := strings.Split(output.String(), "\n")
-	var currentCrate string
+// cargoCrateEntry is one crate block from `cargo install --list` output: the
+// crate itself plus every binary it installs (a crate's binaries can differ
+// from its own name, e.g. crate "ripgrep" installing binary "rg").
+type cargoCrateEntry struct {
+	Crate   string
+	Version string
+	Bins    []string
+}
 
-	for _, line := range lines {
-		// Crate lines don't start with whitespace
+// cargoCrateLineRe matches a crate header line: "crate-name v1.0.0:" or,
+// for a git/path-sourced crate, "crate-name v1.0.0 (https://...):" - the
+// version always stops at the first space or colon, so this is anchored the
+// same way CargoGetVersion's original per-tool regex was.
+var cargoCrateLineRe = regexp.MustCompile(`^(\S+) v([^\s:]+)`)
+
+// parseCargoInstallListEntries is the single parser for `cargo install
+// --list` output. Format:
+//
+//	crate-name v1.0.0:
+//	    binary1
+//	    binary2
+func parseCargoInstallListEntries(output string) []cargoCrateEntry {
+	var entries []cargoCrateEntry
+	var current *cargoCrateEntry
+
+	for _, line := range strings.Split(output, "\n") {
+		// Crate lines don't start with whitespace.
 		if len(line) > 0 && line[0] != ' ' && line[0] != '\t' {
-			// Parse: "crate-name v1.0.0:"
-			fields := strings.Fields(line)
-			if len(fields) > 0 {
-				currentCrate = fields[0]
+			m := cargoCrateLineRe.FindStringSubmatch(line)
+			if m == nil {
+				current = nil
+				continue
 			}
-		} else if strings.TrimSpace(line) == binary && currentCrate != "" {
-			// Found matching binary under current crate
-			return currentCrate
+			entries = append(entries, cargoCrateEntry{Crate: m[1], Version: m[2]})
+			current = &entries[len(entries)-1]
+			continue
+		}
+		if current == nil {
+			continue
+		}
+		if bin := strings.TrimSpace(line); bin != "" {
+			current.Bins = append(current.Bins, bin)
 		}
 	}
+	return entries
+}
 
+// parseCargoInstallList flattens cargo install --list output into a single
+// map keyed by both each crate name and every binary it installs.
+func parseCargoInstallList(output string) map[string]string {
+	versions := make(map[string]string)
+	for _, e := range parseCargoInstallListEntries(output) {
+		versions[e.Crate] = e.Version
+		for _, bin := range e.Bins {
+			versions[bin] = e.Version
+		}
+	}
+	return versions
+}
+
+// getCrateName finds the crate name for a given binary
+func getCrateName(binary string) string {
+	for _, e := range parseCargoInstallListEntries(cargoInstallList()) {
+		for _, bin := range e.Bins {
+			if bin == binary {
+				return e.Crate
+			}
+		}
+	}
 	return ""
+}
+
+// CargoInstalledVersions resolves live versions for every given cargo-typed
+// tool in a single `cargo install --list` call, keyed by whichever name the
+// manifest happens to use for each (crate or binary).
+func CargoInstalledVersions(tools []string) map[string]string {
+	if _, err := exec.LookPath("cargo"); err != nil {
+		return nil
+	}
+	all := parseCargoInstallList(cargoInstallList())
+	versions := make(map[string]string, len(tools))
+	for _, tool := range tools {
+		if v, ok := all[tool]; ok && v != "" {
+			versions[tool] = v
+		}
+	}
+	return versions
 }
 
 // CargoUpdate updates a cargo package

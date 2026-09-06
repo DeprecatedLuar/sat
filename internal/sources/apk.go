@@ -49,6 +49,45 @@ func apkGetVersion(tool string) string {
 	return ""
 }
 
+// parseApkInfoV parses `apk info -v` (no argument = every installed
+// package) output, one "name-version" string per line, against a known
+// set of candidate package names. Splitting "name-version" generically is
+// ambiguous (a package name can itself contain hyphenated numeric-looking
+// segments), so instead of guessing where the name ends, this checks each
+// candidate's own "name-" prefix directly - the same anchor apkGetVersion
+// already uses for a single lookup, just checked against every line once
+// instead of running `apk info -e` once per tool.
+func parseApkInfoV(output string, tools []string) map[string]string {
+	lines := strings.Split(output, "\n")
+	versions := make(map[string]string, len(tools))
+	for _, tool := range tools {
+		prefix := tool + "-"
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, prefix) {
+				versions[tool] = line[len(prefix):]
+				break
+			}
+		}
+	}
+	return versions
+}
+
+// apkInstalledVersions resolves live versions for every given apk-tracked
+// tool in a single `apk info -v` call.
+func apkInstalledVersions(tools []string) map[string]string {
+	if _, err := exec.LookPath("apk"); err != nil {
+		return nil
+	}
+	var output bytes.Buffer
+	cmd := exec.Command("apk", "info", "-v")
+	cmd.Stdout = &output
+	if cmd.Run() != nil {
+		return nil
+	}
+	return parseApkInfoV(output.String(), tools)
+}
+
 // apkPkgExists checks if package exists in apk repositories
 func apkPkgExists(pkg string) bool {
 	// apk search returns packages matching pattern

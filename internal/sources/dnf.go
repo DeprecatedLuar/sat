@@ -51,6 +51,49 @@ func dnfGetVersion(tool string) string {
 	return ""
 }
 
+// parseDnfListInstalled parses `dnf list installed` (no argument = every
+// installed package) output into a map keyed by package name (the ".arch"
+// suffix dnf reports alongside the name is stripped). Lines with fewer than
+// 3 fields (e.g. the "Installed Packages" header) are not the
+// Name.Arch/Version/Repo shape and are skipped.
+func parseDnfListInstalled(output string) map[string]string {
+	versions := make(map[string]string)
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		name := fields[0]
+		if idx := strings.Index(name, "."); idx != -1 {
+			name = name[:idx]
+		}
+		versions[name] = fields[1]
+	}
+	return versions
+}
+
+// dnfInstalledVersions resolves live versions for every given dnf-tracked
+// tool in a single `dnf list installed` call.
+func dnfInstalledVersions(tools []string) map[string]string {
+	if _, err := exec.LookPath("dnf"); err != nil {
+		return nil
+	}
+	var output bytes.Buffer
+	cmd := exec.Command("dnf", "list", "installed")
+	cmd.Stdout = &output
+	if cmd.Run() != nil {
+		return nil
+	}
+	all := parseDnfListInstalled(output.String())
+	versions := make(map[string]string, len(tools))
+	for _, tool := range tools {
+		if v, ok := all[tool]; ok && v != "" {
+			versions[tool] = v
+		}
+	}
+	return versions
+}
+
 // dnfPkgExists checks if package exists in dnf repositories
 func dnfPkgExists(pkg string) bool {
 	cmd := exec.Command("dnf", "info", pkg)

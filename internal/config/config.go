@@ -6,6 +6,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -31,6 +32,12 @@ const (
 // (lib/commands/install.sh).
 var DefaultInstallOrder = []string{"brew", "nix", "system", "cargo", "uv", "npm", "sat", "gh"}
 
+// DefaultDriftInterval is how long a version-drift reconciliation is
+// considered fresh: short enough that a tool updated outside sat (or one
+// that self-updates) self-corrects the same day, long enough that a burst
+// of sat invocations pays the reconcile cost once.
+const DefaultDriftInterval = 12 * time.Hour
+
 // defaultConfigTemplate is written verbatim on first run so the file is
 // self-documenting; Load() parses whatever the user leaves behind.
 const defaultConfigTemplate = `# sat configuration
@@ -40,11 +47,34 @@ const defaultConfigTemplate = `# sat configuration
 # the first one that has the package wins. Sources omitted from this array
 # are never tried at all.
 order = ["brew", "nix", "system", "cargo", "uv", "npm", "sat", "gh"]
+
+# drift_interval: how often sat re-checks installed versions against what
+# the manifest recorded, so tools updated outside sat (or that self-update)
+# stop showing a stale version. Any Go duration ("6h", "30m"); "off"
+# disables it. sat update and sat scan always reconcile regardless.
+drift_interval = "12h"
 `
 
 // Config is the parsed contents of config.toml.
 type Config struct {
-	InstallOrder []string `toml:"order"`
+	InstallOrder  []string `toml:"order"`
+	DriftInterval string   `toml:"drift_interval"`
+}
+
+// ResolvedDriftInterval parses DriftInterval into a duration; 0 means
+// disabled. An unparseable value (a typo in config.toml) falls back to
+// DefaultDriftInterval rather than erroring - a bad edit must not break
+// every sat invocation, since this is checked on every one of them.
+func (c Config) ResolvedDriftInterval() time.Duration {
+	switch c.DriftInterval {
+	case "off", "never", "0":
+		return 0
+	}
+	d, err := time.ParseDuration(c.DriftInterval)
+	if err != nil {
+		return DefaultDriftInterval
+	}
+	return d
 }
 
 // dir returns ~/.config/sat (respecting XDG_CONFIG_HOME).
@@ -76,10 +106,13 @@ func EnsureDefault() error {
 	return os.WriteFile(p, []byte(defaultConfigTemplate), FilePermissions)
 }
 
-// Load reads config.toml, falling back to DefaultInstallOrder for any
-// field left unset (including when the file doesn't exist at all).
+// Load reads config.toml, falling back to DefaultInstallOrder/
+// DefaultDriftInterval for any field left unset (including when the file
+// doesn't exist at all, or predates a field - EnsureDefault never rewrites
+// an existing file, so an upgraded sat must tolerate older configs missing
+// newer keys).
 func Load() (Config, error) {
-	cfg := Config{InstallOrder: DefaultInstallOrder}
+	cfg := Config{InstallOrder: DefaultInstallOrder, DriftInterval: DefaultDriftInterval.String()}
 
 	data, err := os.ReadFile(path())
 	if err != nil {
@@ -96,6 +129,9 @@ func Load() (Config, error) {
 
 	if parsed.InstallOrder != nil {
 		cfg.InstallOrder = parsed.InstallOrder
+	}
+	if parsed.DriftInterval != "" {
+		cfg.DriftInterval = parsed.DriftInterval
 	}
 
 	return cfg, nil
