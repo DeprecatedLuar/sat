@@ -472,19 +472,10 @@ type FlatpakUpdateInfo struct {
 	Name    string
 }
 
-// FlatpakListUpdates asks flatpak for every ref (app or runtime) with a
-// pending update in one non-destructive call, instead of sat polling each
-// tracked app's remote individually. This is what lets sat surface
-// runtime updates (which sat never tracks in its own manifest) alongside
-// tracked-app updates without reimplementing flatpak's own update
-// resolution - a ref's presence in this list is flatpak's own
-// authoritative "needs updating" signal, not just a version-string diff.
-// Returns nil, nil if flatpak isn't installed.
-func FlatpakListUpdates() ([]FlatpakUpdateInfo, error) {
-	if _, err := exec.LookPath("flatpak"); err != nil {
-		return nil, nil
-	}
-
+// flatpakRemoteUpdates runs the actual flatpak query behind
+// FlatpakListUpdates - split out so a stale-appstream retry can call it a
+// second time without re-running the LookPath guard.
+func flatpakRemoteUpdates() ([]FlatpakUpdateInfo, error) {
 	var output bytes.Buffer
 	cmd := exec.Command("flatpak", "remote-ls", "--updates", "--columns=application,version,branch,name")
 	cmd.Stdout = &output
@@ -507,6 +498,71 @@ func FlatpakListUpdates() ([]FlatpakUpdateInfo, error) {
 			Branch:  strings.TrimSpace(fields[2]),
 			Name:    strings.TrimSpace(fields[3]),
 		})
+	}
+	return updates, nil
+}
+
+// flatpakUpdatesLookAmbiguous reports whether any update in updates carries
+// no usable "latest" version - either no version string at all, or one
+// identical to what's already installed. Both are symptoms of a stale
+// local appstream cache (see FlatpakListUpdates), which is worth paying to
+// refresh; a normal batch of clean version bumps never triggers this, so
+// FlatpakInstalledVersions (a second flatpak invocation) is only ever
+// called on the suspect path.
+func flatpakUpdatesLookAmbiguous(updates []FlatpakUpdateInfo) bool {
+	installed := FlatpakInstalledVersions()
+	for _, u := range updates {
+		if u.Version == "" || u.Version == installed[u.AppID+"//"+u.Branch] {
+			return true
+		}
+	}
+	return false
+}
+
+// FlatpakListUpdates asks flatpak for every ref (app or runtime) with a
+// pending update in one non-destructive call, instead of sat polling each
+// tracked app's remote individually. This is what lets sat surface
+// runtime updates (which sat never tracks in its own manifest) alongside
+// tracked-app updates without reimplementing flatpak's own update
+// resolution - a ref's presence in this list is flatpak's own
+// authoritative "needs updating" signal, not just a version-string diff.
+//
+// flatpak's local appstream cache (the metadata remote-ls reads from) can
+// go stale, in which case it echoes back the installed version as the
+// latest one instead of the real pending version. When that's detected,
+// this refreshes the cache (`flatpak update --appstream`, ~10s) and
+// re-queries once; a refresh failure just falls back to the original,
+// possibly-ambiguous result rather than erroring out, since the refresh is
+// an enrichment, not a hard dependency.
+//
+// Returns nil, nil if flatpak isn't installed.
+func FlatpakListUpdates() ([]FlatpakUpdateInfo, error) {
+	if _, err := exec.LookPath("flatpak"); err != nil {
+		return nil, nil
+	}
+
+	updates, err := flatpakRemoteUpdates()
+	if err != nil || len(updates) == 0 {
+		return updates, err
+	}
+
+	if !flatpakUpdatesLookAmbiguous(updates) {
+		return updates, nil
+	}
+
+	if os.Getenv(common.EnvSATDebug) != "" {
+		fmt.Fprintf(os.Stderr, "%s flatpak: stale appstream cache detected, refreshing\n", common.DebugPrefix)
+	}
+
+	if err := common.RunQuiet("flatpak", "update", "--appstream"); err != nil {
+		if os.Getenv(common.EnvSATDebug) != "" {
+			fmt.Fprintf(os.Stderr, "%s flatpak: appstream refresh failed: %v\n", common.DebugPrefix, err)
+		}
+		return updates, nil
+	}
+
+	if refreshed, err := flatpakRemoteUpdates(); err == nil {
+		return refreshed, nil
 	}
 	return updates, nil
 }

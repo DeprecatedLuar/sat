@@ -368,13 +368,23 @@ func updateOutdated(sourceFilter string) error {
 // flatpak refs report no version string at all, and others report the
 // same string on both sides (flatpak's own version tag doesn't always
 // change between updates, even though remote-ls --updates confirms a
-// newer commit is pending).
+// newer commit is pending - sources.FlatpakListUpdates already retries
+// against a fresh appstream cache before this is ever called, so a
+// same-version pair reaching here means the pending update really is just
+// a rebuild). "?" marks a side with no version info at all; when neither
+// side has any, that's "?" -> "?²" - one order of magnitude more unknown.
 func flatpakDisplayVersions(current, latest string) (string, string) {
-	if latest == "" || current == latest {
-		latest = "update available"
+	if current == "" && latest == "" {
+		return "?", "?²"
+	}
+	if latest == current {
+		return current, "rebuild"
 	}
 	if current == "" {
-		current = "unknown"
+		current = "?"
+	}
+	if latest == "" {
+		latest = "?"
 	}
 	return current, latest
 }
