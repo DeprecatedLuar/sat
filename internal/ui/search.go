@@ -20,6 +20,16 @@ const MinInlineDescCol = 24
 // but not "programming").
 var nameDelimiters = []string{"-", "_", "@", "/", "."}
 
+// CollapseSeparators strips the characters in nameDelimiters from s, so
+// separator-variant spellings of the same package name compare equal (e.g.
+// "kde-connect" and "kdeconnect").
+func CollapseSeparators(s string) string {
+	for _, d := range nameDelimiters {
+		s = strings.ReplaceAll(s, d, "")
+	}
+	return s
+}
+
 // FilterRelevant filters search results down to those whose name matches the
 // query at a word boundary, or whose description contains the query.
 // Each result is expected in "name version - description" format.
@@ -45,8 +55,33 @@ func FilterRelevant(results []string, query string) []string {
 			continue
 		}
 
-		if len(parts) > 1 && strings.Contains(strings.ToLower(parts[1]), query) {
-			filtered = append(filtered, result)
+		// Separator-variant fallbacks, tried in order of how much boundary
+		// information they preserve. Collapsing the query alone keeps the
+		// name's delimiters intact, so matchesWithDelimiters can still find
+		// "kdeconnect" at the "." boundary in "kdePackages.kdeconnect-kde";
+		// collapsing both sides destroys those boundaries, so it only serves
+		// the reverse case (name carries the separator, query doesn't).
+		collapsedQuery := CollapseSeparators(query)
+		if collapsedQuery != "" {
+			if matchesWithDelimiters(nameLower, collapsedQuery) {
+				filtered = append(filtered, result)
+				continue
+			}
+			if matchesWithDelimiters(CollapseSeparators(nameLower), collapsedQuery) {
+				filtered = append(filtered, result)
+				continue
+			}
+		}
+
+		if len(parts) > 1 {
+			descLower := strings.ToLower(parts[1])
+			if strings.Contains(descLower, query) {
+				filtered = append(filtered, result)
+				continue
+			}
+			if collapsedQuery != "" && strings.Contains(CollapseSeparators(strings.ReplaceAll(descLower, " ", "")), collapsedQuery) {
+				filtered = append(filtered, result)
+			}
 		}
 	}
 

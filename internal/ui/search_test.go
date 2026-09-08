@@ -51,6 +51,103 @@ func TestFilterRelevant(t *testing.T) {
 	}
 }
 
+func TestFilterRelevantCollapsedSeparators(t *testing.T) {
+	// Mirrors real `sat search kde-connect` nix output. kdePackages.kdeconnect-kde
+	// is the actual KDE Connect package: its name matches only at the "."
+	// boundary, so it survives solely because the collapsed-query fallback
+	// leaves the name's delimiters intact. Collapsing both sides flattens it to
+	// "kdepackageskdeconnectkde", which matches nothing — regression guard.
+	results := []string{
+		"emacsPackages.kdeconnect 20231029.2250 - no description",
+		"kdePackages.kdeconnect-kde 25.08.3 - Multi-platform app that allows your devices to communicate",
+		"yaziPlugins.kdeconnect-send 0 - Send selected files to your smartphone",
+		"kdeconnect_waybar 1.1.2 - A highly customizable KDE Connect module for Waybar",
+		"bat 0.24.0 - a cat clone with syntax highlighting",
+		"jq 1.7.1 - lightweight command-line JSON processor",
+	}
+
+	want := []string{
+		"emacsPackages.kdeconnect 20231029.2250 - no description",
+		"kdePackages.kdeconnect-kde 25.08.3 - Multi-platform app that allows your devices to communicate",
+		"yaziPlugins.kdeconnect-send 0 - Send selected files to your smartphone",
+		"kdeconnect_waybar 1.1.2 - A highly customizable KDE Connect module for Waybar",
+	}
+
+	for _, query := range []string{"kde-connect", "kdeconnect"} {
+		got := FilterRelevant(results, query)
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("FilterRelevant(%q) = %v, want %v", query, got, want)
+		}
+	}
+}
+
+// TestFilterRelevantSeparatorVariantParity locks the core promise of the
+// separator-insensitive search: a hyphenated query must never return fewer
+// results than its collapsed spelling.
+func TestFilterRelevantSeparatorVariantParity(t *testing.T) {
+	results := []string{
+		"kdePackages.kdeconnect-kde 25.08.3 - Multi-platform app",
+		"emacsPackages.kdeconnect 20231029.2250 - no description",
+		"kdeconnect-cli 0.2.0 - A Command Line Interface",
+		"kde-connect 26.04.2 - Communicate with your handheld devices",
+		"unrelated-tool 1.0.0 - nothing to do with it",
+	}
+
+	hyphen := FilterRelevant(results, "kde-connect")
+	collapsed := FilterRelevant(results, "kdeconnect")
+
+	if len(hyphen) < len(collapsed) {
+		t.Errorf("hyphenated query returned fewer results than collapsed:\n  kde-connect: %v\n  kdeconnect:  %v", hyphen, collapsed)
+	}
+	for _, want := range collapsed {
+		found := false
+		for _, got := range hyphen {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("result %q matched by %q but dropped by %q", want, "kdeconnect", "kde-connect")
+		}
+	}
+}
+
+func TestFilterRelevantCollapsedDescription(t *testing.T) {
+	results := []string{
+		"soduto 1.0.0 - Soduto is a KDEConnect compatible client for macOS",
+	}
+
+	got := FilterRelevant(results, "kde-connect")
+	want := []string{"soduto 1.0.0 - Soduto is a KDEConnect compatible client for macOS"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("FilterRelevant(%q) = %v, want %v", "kde-connect", got, want)
+	}
+}
+
+func TestCollapseSeparators(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain word unchanged", "kdeconnect", "kdeconnect"},
+		{"hyphen collapsed", "kde-connect", "kdeconnect"},
+		{"mixed delimiters collapsed", "foo_bar.baz", "foobarbaz"},
+		{"all-delimiter string collapses to empty", "---", ""},
+		{"empty string", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CollapseSeparators(tt.in)
+			if got != tt.want {
+				t.Errorf("CollapseSeparators(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMatchesWithDelimiters(t *testing.T) {
 	tests := []struct {
 		name  string

@@ -80,7 +80,7 @@ func searchSingleSource(query, source string, filterResults, compact bool, termW
 	}
 
 	// Execute search
-	results, err := executeSearch(sourceName, query)
+	results, err := searchVariants(sourceName, query)
 	if err != nil || len(results) == 0 {
 		if sourceName == "pypi" {
 			fmt.Printf("No exact match on pypi for %q (pypi only supports exact package-name lookups, not fuzzy search — check the other ecosystems' results for the real name)\n", query)
@@ -118,7 +118,7 @@ func searchAllSources(query string, filterResults, compact bool, termWidth int) 
 		go func(source string) {
 			defer wg.Done()
 
-			results, err := executeSearch(source, query)
+			results, err := searchVariants(source, query)
 			if err != nil || len(results) == 0 {
 				return
 			}
@@ -155,6 +155,69 @@ func searchAllSources(query string, filterResults, compact bool, termWidth int) 
 	}
 
 	return nil
+}
+
+// queryVariants returns the query forms to search, literal first. Returns a
+// single element when the query has no separators to collapse (see
+// ui.CollapseSeparators), so callers that don't need multi-variant search pay
+// nothing extra.
+func queryVariants(query string) []string {
+	variants := []string{query}
+
+	collapsed := ui.CollapseSeparators(query)
+	if collapsed != "" && collapsed != query {
+		variants = append(variants, collapsed)
+	}
+
+	return variants
+}
+
+// searchVariants runs executeSearch once per query variant (see
+// queryVariants) and merges the results via mergeVariantResults. Returns an
+// error only if every variant errored, so one variant failing doesn't mask
+// another's hits.
+func searchVariants(source, query string) ([]string, error) {
+	variants := queryVariants(query)
+
+	resultSets := make([][]string, 0, len(variants))
+	var lastErr error
+
+	for _, variant := range variants {
+		results, err := executeSearch(source, variant)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		resultSets = append(resultSets, results)
+	}
+
+	if len(resultSets) == 0 {
+		return nil, lastErr
+	}
+	return mergeVariantResults(resultSets), nil
+}
+
+// mergeVariantResults flattens one result set per query variant into a
+// single list, deduped by package name (case-insensitive) with the first
+// occurrence winning — so results from the literal query, listed first, take
+// precedence over the collapsed-separator variant's.
+func mergeVariantResults(resultSets [][]string) []string {
+	merged := []string{}
+	seen := map[string]bool{}
+
+	for _, results := range resultSets {
+		for _, result := range results {
+			name, _, _ := ui.ParseResult(result)
+			key := strings.ToLower(name)
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			merged = append(merged, result)
+		}
+	}
+
+	return merged
 }
 
 // executeSearch calls the appropriate search function for a source
