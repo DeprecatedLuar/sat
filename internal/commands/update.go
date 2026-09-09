@@ -15,7 +15,12 @@ import (
 	"github.com/DeprecatedLuar/sat/internal/ui"
 )
 
-const updateUsage = "usage: sat update [<tool> ...] [--cargo|--brew|--nix|--apt|--gh|--appimage|--flatpak|--npm|--uv|--go]"
+const updateUsage = "usage: sat update [<tool> ...] [--cargo|--brew|--nix|--apt|--gh|--appimage|--flatpak|--npm|--uv|--go|--sat] [-y|--yes]"
+
+// selfToolName is how sat lists itself among the update candidates. sat has
+// no manifest entry of its own, so its outdated row is synthesized during the
+// scan rather than read from manifest.All().
+const selfToolName = "sat"
 
 // Source-type aliases recognized alongside their canonical common.Source*
 // constants (older manifests / scan output may still record these).
@@ -42,6 +47,7 @@ var updateFlagSource = map[string]string{
 	"--npm":      common.SourceNPM,
 	"--uv":       common.SourceUV,
 	"--go":       common.SourceGo,
+	"--sat":      common.SourceSat,
 }
 
 // HandleUpdate routes between self-update, explicit tool updates, and the
@@ -62,12 +68,17 @@ func HandleUpdate(args []string, version, repo string) error {
 
 	var tools []string
 	var sourceFilter string
+	var skipConfirm bool
 	for _, arg := range args {
+		if arg == "-y" || arg == "--yes" {
+			skipConfirm = true
+			continue
+		}
 		if src, ok := updateFlagSource[arg]; ok {
 			sourceFilter = src
 			continue
 		}
-		if strings.HasPrefix(arg, "--") {
+		if strings.HasPrefix(arg, "--") || strings.HasPrefix(arg, "-") {
 			return fmt.Errorf("unknown flag: %s\n%s", arg, updateUsage)
 		}
 		tools = append(tools, arg)
@@ -80,7 +91,7 @@ func HandleUpdate(args []string, version, repo string) error {
 		return nil
 	}
 
-	return updateOutdated(sourceFilter)
+	return updateOutdated(sourceFilter, skipConfirm, version, repo)
 }
 
 // updateOne updates a single tool via its recorded source, mirroring
@@ -253,7 +264,7 @@ type outdatedEntry struct {
 // sequentially inside its own goroutine so a source with many tracked
 // tools (e.g. cargo hitting crates.io per package) doesn't burst a remote
 // registry with concurrent requests; only the source types run in parallel.
-func updateOutdated(sourceFilter string) error {
+func updateOutdated(sourceFilter string, skipConfirm bool, version, repo string) error {
 	entries, err := manifest.All()
 	if err != nil {
 		return err
@@ -303,6 +314,21 @@ func updateOutdated(sourceFilter string) error {
 			mu.Unlock()
 		}()
 	}
+	if sourceFilter == "" || sourceFilter == common.SourceSat {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			latest, ok := SelfUpdateCheck(version, repo)
+			if !ok {
+				return
+			}
+			mu.Lock()
+			outdated = append(outdated, outdatedEntry{
+				tool: selfToolName, source: common.SourceSat, current: version, latest: latest,
+			})
+			mu.Unlock()
+		}()
+	}
 	wg.Wait()
 
 	if len(outdated) == 0 {
@@ -344,16 +370,25 @@ func updateOutdated(sourceFilter string) error {
 			ui.ToolNameWidth, ui.TruncateName(o.tool, ui.ToolNameWidth), color, outdatedTag(o), ui.Reset, o.current, o.latest)
 	}
 
-	fmt.Printf("\nUpdate all %d? [y/N] ", len(outdated))
-	reader := bufio.NewReader(os.Stdin)
-	answer, _ := reader.ReadString('\n')
-	answer = strings.ToLower(strings.TrimSpace(answer))
-	if answer != "y" && answer != "yes" {
-		return nil
+	if skipConfirm {
+		fmt.Printf("\nUpdating all %d\n", len(outdated))
+	} else {
+		fmt.Printf("\nUpdate all %d? [y/N] ", len(outdated))
+		reader := bufio.NewReader(os.Stdin)
+		answer, _ := reader.ReadString('\n')
+		answer = strings.ToLower(strings.TrimSpace(answer))
+		if answer != "y" && answer != "yes" {
+			return nil
+		}
 	}
 
 	var depRefs []string
+	var selfLatest string
 	for _, o := range outdated {
+		if o.source == common.SourceSat {
+			selfLatest = o.latest
+			continue
+		}
 		if o.dep {
 			depRefs = append(depRefs, o.identity)
 			continue
@@ -370,6 +405,13 @@ func updateOutdated(sourceFilter string) error {
 		} else {
 			ui.Status(fmt.Sprintf("%d flatpak runtime(s) updated [%s]", len(depRefs), ui.SourceDisplay(common.SourceFlatpak)))
 		}
+	}
+
+	// Deliberately last: the installer swaps out the binary this process is
+	// running from, so every other tool must already be done by the time it
+	// runs. Nothing may be sequenced after this.
+	if selfLatest != "" {
+		return selfUpdateInstall(selfLatest, repo)
 	}
 	return nil
 }
