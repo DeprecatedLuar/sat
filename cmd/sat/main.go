@@ -103,7 +103,10 @@ func main() {
 	case "info", "which", "whereis":
 		notImplemented("info")
 	case "clone":
-		notImplemented("clone")
+		if err := commands.Clone(commandArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "sat: clone failed: %v\n", err)
+			os.Exit(1)
+		}
 	case "pull":
 		notImplemented("pull")
 	case "deps", "dependencies":

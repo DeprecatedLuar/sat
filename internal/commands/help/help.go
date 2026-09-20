@@ -45,7 +45,7 @@ func Run(args []string) {
 			gohelp.Item("pulverize", "Clear entire manifest (with confirmation)"),
 			gohelp.Item("outdated", "Show available updates for tracked packages"),
 			gohelp.Item("pull", "Refresh sat library from GitHub"),
-			gohelp.Item("clone <repo> [dest]", "Clone your repo"),
+			gohelp.Item("clone [--gh|--gl|--cb] <owner/repo> [dest]", "Clone a repo (GitHub by default)"),
 		).
 		Section("Source syntax (install/shell)",
 			gohelp.Item("pkg:sys", "System package manager (apt/pacman/etc)"),
