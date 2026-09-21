@@ -15,6 +15,10 @@ import (
 // HuberBinDirRel is huber's own binary directory, relative to $HOME.
 const HuberBinDirRel = ".huber/bin"
 
+// huberCollisionSuffix is appended to a huber-installed binary's name when
+// another install already owns that name in ~/.local/bin.
+const huberCollisionSuffix = "gh"
+
 // goCmdMainRe matches "cmd/<name>/main.go" tree paths, mirroring bash's
 // `grep -oP '^cmd/\K[^/]+(?=/main\.go$)'` (lib/sources/github.sh:284).
 var goCmdMainRe = regexp.MustCompile(`^cmd/([^/]+)/main\.go$`)
@@ -101,14 +105,11 @@ func InstallHuber(repoPath string) (binName, srcString string, err error) {
 		return "", "", fmt.Errorf("could not resolve huber-installed binary for %s", repoPath)
 	}
 
-	binName = filepath.Base(huberBin)
-	localBin := common.LocalBin()
-	if err := os.MkdirAll(localBin, 0755); err != nil {
+	binName, err = common.ResolveBinName(filepath.Base(huberBin), huberCollisionSuffix, dir)
+	if err != nil {
 		return "", "", err
 	}
-	symlink := filepath.Join(localBin, binName)
-	os.Remove(symlink)
-	if err := os.Symlink(huberBin, symlink); err != nil {
+	if err := common.LinkBin(binName, huberBin); err != nil {
 		return "", "", err
 	}
 

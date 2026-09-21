@@ -21,6 +21,10 @@ import (
 // sed -E 's/[_-]([0-9]+\.[0-9]|v?[0-9]+).*//' (lib/sources/appimage.sh:89).
 var appImageVersionSuffix = regexp.MustCompile(`[_-]([0-9]+\.[0-9]|v?[0-9]+).*`)
 
+// appImageCollisionSuffix is appended to an AppImage's name when another
+// install already owns that name in ~/.local/bin.
+const appImageCollisionSuffix = "appimage"
+
 // githubReleaseAsset is a single asset attached to a GitHub release.
 type githubReleaseAsset struct {
 	Name               string `json:"name"`
@@ -86,9 +90,11 @@ func AppImageInstall(repoPath string) (binName string, err error) {
 		fmt.Fprintf(os.Stderr, "[debug]   selected: %s\n", assetName)
 	}
 
-	appName := cleanAppImageName(assetName, repoPath)
-
 	appimageDir := common.AppImagesDir()
+	appName, err := common.ResolveBinName(cleanAppImageName(assetName, repoPath), appImageCollisionSuffix, appimageDir)
+	if err != nil {
+		return "", err
+	}
 	appimagePath := filepath.Join(appimageDir, appName)
 	symlinkPath := filepath.Join(common.LocalBin(), appName)
 
@@ -111,9 +117,8 @@ func AppImageInstall(repoPath string) (binName string, err error) {
 	if os.Getenv(common.EnvSATDebug) != "" {
 		fmt.Fprintf(os.Stderr, "[debug]   creating symlink %s\n", symlinkPath)
 	}
-	os.Remove(symlinkPath)
-	if err := os.Symlink(appimagePath, symlinkPath); err != nil {
-		return "", fmt.Errorf("failed to create symlink: %w", err)
+	if err := common.LinkBin(appName, appimagePath); err != nil {
+		return "", err
 	}
 
 	if os.Getenv(common.EnvSATDebug) != "" {
@@ -126,17 +131,15 @@ func AppImageInstall(repoPath string) (binName string, err error) {
 }
 
 // AppImageUninstall removes the symlink and the stored AppImage file.
-// Matches bash's rm -f semantics: missing files are not an error.
+// Matches bash's rm -f semantics: missing files are not an error. The
+// symlink is only removed if it still points at an AppImage, so a different
+// source that took over the name keeps its launcher.
 func AppImageUninstall(pkg, source string) error {
-	symlinkPath := filepath.Join(common.LocalBin(), pkg)
 	appimagePath := filepath.Join(common.AppImagesDir(), pkg)
 
 	removeDesktopEntry(pkg)
 
-	var firstErr error
-	if err := os.Remove(symlinkPath); err != nil && !os.IsNotExist(err) {
-		firstErr = err
-	}
+	firstErr := common.UnlinkBin(pkg, common.AppImagesDir())
 	if err := os.Remove(appimagePath); err != nil && !os.IsNotExist(err) && firstErr == nil {
 		firstErr = err
 	}
