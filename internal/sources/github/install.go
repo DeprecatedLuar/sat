@@ -12,22 +12,9 @@ import (
 	"github.com/DeprecatedLuar/sat/internal/common"
 )
 
-// HuberBinDirRel is huber's own binary directory, relative to $HOME.
-const HuberBinDirRel = ".huber/bin"
-
-// huberCollisionSuffix is appended to a huber-installed binary's name when
-// another install already owns that name in ~/.local/bin.
-const huberCollisionSuffix = "gh"
-
 // goCmdMainRe matches "cmd/<name>/main.go" tree paths, mirroring bash's
 // `grep -oP '^cmd/\K[^/]+(?=/main\.go$)'` (lib/sources/github.sh:284).
 var goCmdMainRe = regexp.MustCompile(`^cmd/([^/]+)/main\.go$`)
-
-// huberBinDir returns huber's own binary directory (~/.huber/bin).
-func huberBinDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, HuberBinDirRel)
-}
 
 // repoBaseName extracts the repo part of an "owner/repo" string.
 func repoBaseName(repoPath string) string {
@@ -57,7 +44,7 @@ func containsPath(tree []string, path string) bool {
 }
 
 // InstallHuber installs repoPath via huber (binary release install) and
-// symlinks the resolved binary into common.LocalBin(). Binary resolution
+// links the resolved binary into common.LocalBin(). Binary resolution
 // mirrors bash's _install_huber (lib/sources/github.sh:229): try release
 // asset names first, then the exact repo name, then an aggressive glob
 // search over huber's symlink directory.
@@ -71,7 +58,7 @@ func InstallHuber(repoPath string) (binName, srcString string, err error) {
 	}
 
 	repoName := repoBaseName(repoPath)
-	dir := huberBinDir()
+	dir := common.HuberBinDir()
 
 	var huberBin string
 	if bins, err := getReleaseBinaries(repoPath); err == nil {
@@ -105,15 +92,11 @@ func InstallHuber(repoPath string) (binName, srcString string, err error) {
 		return "", "", fmt.Errorf("could not resolve huber-installed binary for %s", repoPath)
 	}
 
-	binName, err = common.ResolveBinName(filepath.Base(huberBin), huberCollisionSuffix, dir)
-	if err != nil {
-		return "", "", err
-	}
-	if err := common.LinkBin(binName, huberBin); err != nil {
+	if _, err := common.LinkBin(huberBin); err != nil {
 		return "", "", err
 	}
 
-	return binName, "gh:" + repoPath, nil
+	return filepath.Base(huberBin), "gh:" + repoPath, nil
 }
 
 // InstallGo builds repoPath from source via "go install", mirroring bash's

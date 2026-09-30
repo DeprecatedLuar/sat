@@ -130,6 +130,9 @@ func resolveIconPath(rootDir, iconName string) (string, error) {
 	return "", nil
 }
 
+// desktopExecKey prefixes the command line in a .desktop file.
+const desktopExecKey = "Exec="
+
 // execFieldCodes are the freedesktop Exec= field codes that must be
 // preserved verbatim when rewriting the command.
 var execFieldCodes = map[string]bool{
@@ -138,8 +141,8 @@ var execFieldCodes = map[string]bool{
 }
 
 // rewriteExec replaces the leading command of a .desktop Exec= value with
-// symlinkPath, preserving any trailing field codes from the original.
-func rewriteExec(originalExec, symlinkPath string) string {
+// command, preserving any trailing field codes from the original.
+func rewriteExec(originalExec, command string) string {
 	fields := strings.Fields(originalExec)
 
 	var codes []string
@@ -150,15 +153,15 @@ func rewriteExec(originalExec, symlinkPath string) string {
 	}
 
 	if len(codes) == 0 {
-		return symlinkPath
+		return command
 	}
-	return symlinkPath + " " + strings.Join(codes, " ")
+	return command + " " + strings.Join(codes, " ")
 }
 
 // writeDesktopEntry builds and writes the canonical .desktop file for an
 // installed AppImage, using the parsed embedded fields with sat-specific
 // overrides for Exec=, Icon=, and provenance.
-func writeDesktopEntry(fields map[string]string, appName, symlinkPath, iconPath, repoPath string) error {
+func writeDesktopEntry(fields map[string]string, appName, appimagePath, iconPath, repoPath string) error {
 	name := fields["Name"]
 	if name == "" {
 		name = appName
@@ -170,7 +173,7 @@ func writeDesktopEntry(fields map[string]string, appName, symlinkPath, iconPath,
 	if comment := fields["Comment"]; comment != "" {
 		fmt.Fprintf(&b, "Comment=%s\n", comment)
 	}
-	fmt.Fprintf(&b, "Exec=%s\n", rewriteExec(fields["Exec"], symlinkPath))
+	fmt.Fprintf(&b, "Exec=%s\n", rewriteExec(fields["Exec"], appimagePath))
 	if iconPath != "" {
 		fmt.Fprintf(&b, "Icon=%s\n", iconPath)
 	}
@@ -228,16 +231,46 @@ func BackfillDesktopEntries() {
 		if entry.IsDir() || skipDirs[name] {
 			continue
 		}
+		appimagePath := filepath.Join(appimagesDir, name)
 		if HasDesktopEntry(name) {
+			if err := repointDesktopExec(name, appimagePath); err != nil {
+				fmt.Fprintf(os.Stderr, "sat: warning: desktop entry for %s: %v\n", name, err)
+			}
 			continue
 		}
 
-		appimagePath := filepath.Join(appimagesDir, name)
-		symlinkPath := filepath.Join(common.LocalBin(), name)
 		repoPath := manifest.GetSourceIdentity(manifest.Get(name))
 
-		InstallDesktopEntry(appimagePath, symlinkPath, name, repoPath, false)
+		InstallDesktopEntry(appimagePath, name, repoPath, false)
 	}
+}
+
+// repointDesktopExec rewrites an existing entry whose Exec= command is the
+// ~/.local/bin link to the stored AppImage, so renaming the link never breaks
+// the launcher. Entries already pointing elsewhere are left untouched.
+func repointDesktopExec(appName, appimagePath string) error {
+	desktopPath := filepath.Join(common.AppImageApplicationsDir(), appName+".desktop")
+	data, err := os.ReadFile(desktopPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	stale := desktopExecKey + filepath.Join(common.LocalBin(), appName)
+	lines := strings.Split(string(data), "\n")
+	changed := false
+	for i, line := range lines {
+		if line == stale || strings.HasPrefix(line, stale+" ") {
+			lines[i] = desktopExecKey + appimagePath + strings.TrimPrefix(line, stale)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return os.WriteFile(desktopPath, []byte(strings.Join(lines, "\n")), 0644)
 }
 
 // HasDesktopEntry reports whether appName already has a generated desktop
@@ -257,7 +290,7 @@ func HasDesktopEntry(appName string) bool {
 // fresh AppImage install (the user just acted, so it's actionable now),
 // false for selfheal's backfill loop (which retries every startup and
 // would otherwise repeat the same warning on every sat invocation).
-func InstallDesktopEntry(appimagePath, symlinkPath, appName, repoPath string, warnMissingTool bool) {
+func InstallDesktopEntry(appimagePath, appName, repoPath string, warnMissingTool bool) {
 	debug := os.Getenv(common.EnvSATDebug) != ""
 
 	if _, err := exec.LookPath("unsquashfs"); err != nil {
@@ -333,7 +366,7 @@ func InstallDesktopEntry(appimagePath, symlinkPath, appName, repoPath string, wa
 		}
 	}
 
-	if err := writeDesktopEntry(fields, appName, symlinkPath, iconDest, repoPath); err != nil {
+	if err := writeDesktopEntry(fields, appName, appimagePath, iconDest, repoPath); err != nil {
 		if debug {
 			fmt.Fprintf(os.Stderr, "[debug]   desktop entry: failed to write .desktop file: %v\n", err)
 		}

@@ -70,3 +70,13 @@ func FlatpakWrapperDir() string {
 func SourcesBinDir() string {
 	return filepath.Join(manifest.DataDir(), manifest.BinDirName, manifest.SourcesDirName)
 }
+
+// HuberBinSubpath is huber's own binary directory, relative to the user's
+// home directory.
+const HuberBinSubpath = ".huber/bin"
+
+// HuberBinDir returns ~/.huber/bin, where huber keeps the binaries it installs.
+func HuberBinDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, HuberBinSubpath)
+}

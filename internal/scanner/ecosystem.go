@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,15 +109,13 @@ func ScanFlatpak() ([]sources.Package, error) {
 		// Prefer the app's canonical display name (e.g. "Telegram" for
 		// org.telegram.desktop, whose last ID segment is a generic word);
 		// falls back to the last ID component if the display name isn't
-		// plain alphanumeric. This is the manifest key, independent of the
-		// wrapper's actual on-disk filename - EnsureFlatpakWrapper may
-		// suffix that to avoid a collision (e.g. "discord-2"), but the
-		// manifest should keep tracking this app under its natural name
-		// regardless, since that's the name used everywhere else (sat
-		// update discord, sat list, ...).
+		// plain alphanumeric. This is both the manifest key and the
+		// wrapper's filename.
 		prog := sources.FlatpakToolName(appID, displayNames)
 
-		sources.EnsureFlatpakWrapper(appID)
+		if err := sources.EnsureFlatpakWrapper(appID, prog); err != nil {
+			fmt.Fprintf(os.Stderr, "sat: warning: flatpak wrapper for %s: %v\n", appID, err)
+		}
 
 		packages = append(packages, sources.Package{
 			Name:     prog,

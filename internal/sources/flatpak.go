@@ -19,14 +19,8 @@ import (
 const flatpakWrapperScript = "#!/usr/bin/env bash\nexec flatpak run %s \"$@\"\n"
 
 // flatpakWrapperAppIDRe extracts the app_id a wrapper script execs, so
-// callers can find "the wrapper for this app_id" without recomputing its
-// name (which may have been suffixed by resolveWrapperName to avoid a
-// collision).
+// callers can find "the wrapper for this app_id" without recomputing its name.
 var flatpakWrapperAppIDRe = regexp.MustCompile(`exec flatpak run (\S+)`)
-
-// flatpakCollisionSuffix is appended to a wrapper's name when another
-// install already owns that name.
-const flatpakCollisionSuffix = "flatpak"
 
 // flatpakMaxSearchResults caps how many flatpak search results are returned.
 const flatpakMaxSearchResults = 5
@@ -99,31 +93,8 @@ func FlatpakToolName(appID string, displayNames map[string]string) string {
 	return flatpakShortName(appID)
 }
 
-// wrapperNameTaken reports whether name can't be used for a new wrapper
-// because a binary elsewhere on $PATH would be shadowed by it (or shadow
-// it), or because another app's wrapper script already holds the name.
-// Links in LocalBin() itself are left to common.ResolveBinName.
-func wrapperNameTaken(name string) bool {
-	if p, err := exec.LookPath(name); err == nil && filepath.Dir(p) != common.LocalBin() {
-		return true
-	}
-	_, err := os.Stat(filepath.Join(common.FlatpakWrapperDir(), name))
-	return err == nil
-}
-
-// resolveWrapperName returns a wrapper name guaranteed not to collide with
-// an existing binary or another app's wrapper: candidate if free, otherwise
-// candidate-flatpak.
-func resolveWrapperName(candidate string) (string, error) {
-	if wrapperNameTaken(candidate) {
-		candidate += "-" + flatpakCollisionSuffix
-	}
-	return common.ResolveBinName(candidate, flatpakCollisionSuffix, common.FlatpakWrapperDir())
-}
-
 // createFlatpakWrapper writes a launcher wrapper script for appID at
-// common.FlatpakWrapperDir()/name and symlinks it into common.LocalBin().
-// name must already be collision-resolved.
+// common.FlatpakWrapperDir()/name and links it into common.LocalBin().
 func createFlatpakWrapper(name, appID string) error {
 	dir := common.FlatpakWrapperDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -136,7 +107,7 @@ func createFlatpakWrapper(name, appID string) error {
 		return fmt.Errorf("failed to write flatpak wrapper: %w", err)
 	}
 
-	if err := common.LinkBin(name, scriptPath); err != nil {
+	if _, err := common.LinkBin(scriptPath); err != nil {
 		return fmt.Errorf("failed to symlink flatpak wrapper: %w", err)
 	}
 
@@ -144,39 +115,40 @@ func createFlatpakWrapper(name, appID string) error {
 }
 
 // removeFlatpakWrapper deletes a launcher wrapper's script and its symlink.
-// Matches bash's rm -f semantics: missing files are not an error. The
-// symlink is only removed if it still points at a wrapper, so a different
-// source that took over the name keeps its launcher.
+// Missing files are not an error.
 func removeFlatpakWrapper(name string) error {
-	os.Remove(filepath.Join(common.FlatpakWrapperDir(), name))
-	return common.UnlinkBin(name, common.FlatpakWrapperDir())
+	scriptPath := filepath.Join(common.FlatpakWrapperDir(), name)
+	if err := os.Remove(scriptPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return common.UnlinkBin(scriptPath)
 }
 
-// EnsureFlatpakWrapper makes sure a launcher wrapper exists for appID,
-// creating one (collision-safe) if it doesn't. Idempotent: safe to call
-// from install, scan, and selfheal reconciliation alike. Returns the
-// wrapper's name, which may differ from flatpakShortName(appID) if a
-// collision required a suffix.
-func EnsureFlatpakWrapper(appID string) (name string, err error) {
-	if name, ok := findWrapperForAppID(appID); ok {
-		return name, nil
+// EnsureFlatpakWrapper makes sure a launcher wrapper named name exists for
+// appID, creating it if it doesn't. Idempotent: safe to call from install and
+// scan alike. Errors if name already belongs to a different app ID.
+func EnsureFlatpakWrapper(appID, name string) error {
+	if _, ok := findWrapperForAppID(appID); ok {
+		return nil
 	}
 
-	name, err = resolveWrapperName(flatpakShortName(appID))
-	if err != nil {
-		return "", err
+	data, err := os.ReadFile(filepath.Join(common.FlatpakWrapperDir(), name))
+	if err == nil {
+		other := ""
+		if m := flatpakWrapperAppIDRe.FindStringSubmatch(string(data)); len(m) > 1 {
+			other = m[1]
+		}
+		return fmt.Errorf("wrapper name %q is used by %s, cannot also be used for %s", name, other, appID)
 	}
-	if err := createFlatpakWrapper(name, appID); err != nil {
-		return "", err
+	if !os.IsNotExist(err) {
+		return err
 	}
-	return name, nil
+	return createFlatpakWrapper(name, appID)
 }
 
 // findWrapperForAppID scans common.FlatpakWrapperDir() for the wrapper
 // script that execs appID, returning its name. Matching by script content
-// (rather than recomputing the name from appID) is necessary because
-// resolveWrapperName may have suffixed the wrapper away from its natural
-// short name to avoid a collision.
+// keeps lookups independent of how the name was derived.
 func findWrapperForAppID(appID string) (name string, ok bool) {
 	entries, err := os.ReadDir(common.FlatpakWrapperDir())
 	if err != nil {
@@ -289,56 +261,39 @@ func ReconcileWrappers() (created, pruned int) {
 	return created, pruned
 }
 
-// reconcileWrapper brings one installed, tracked app's wrapper in line with
-// what it should be, returning true if a wrapper was newly created:
-//   - no wrapper yet: create one under a collision-free name.
-//   - wrapper's symlink went missing or was taken over by another install
-//     (e.g. an AppImage of the same name overwrote it): relink it, or
-//     rename the wrapper to a collision-free name if the name is taken.
-//   - wrapper is stuck on a collision-suffixed name from when something
-//     else occupied the natural name, and that name is free again: promote
-//     it back instead of leaving it suffixed forever.
-func reconcileWrapper(appID, natural string) (created bool) {
-	name, ok := findWrapperForAppID(appID)
+// reconcileWrapper creates the wrapper for one installed, tracked app if it
+// has none, or renames one stored under a different name, returning true if
+// one was created. Link naming is owned by common.ReconcileBinLinks.
+func reconcileWrapper(appID, name string) (created bool) {
+	current, ok := findWrapperForAppID(appID)
 	if !ok {
-		resolved, err := resolveWrapperName(natural)
-		if err != nil {
-			warnWrapperFailure(appID, err)
-			return false
-		}
-		if err := createFlatpakWrapper(resolved, appID); err != nil {
+		if err := EnsureFlatpakWrapper(appID, name); err != nil {
 			warnWrapperFailure(appID, err)
 			return false
 		}
 		return true
 	}
-
-	if name != natural && !wrapperNameTaken(natural) && common.BinNameAvailable(natural, common.FlatpakWrapperDir()) {
-		if err := createFlatpakWrapper(natural, appID); err != nil {
+	if current != name {
+		if err := renameFlatpakWrapper(current, name); err != nil {
 			warnWrapperFailure(appID, err)
-			return false
 		}
-		removeFlatpakWrapper(name)
-		return false
-	}
-
-	resolved, err := common.ResolveBinName(name, flatpakCollisionSuffix, common.FlatpakWrapperDir())
-	if err != nil {
-		warnWrapperFailure(appID, err)
-		return false
-	}
-	if resolved != name {
-		if err := createFlatpakWrapper(resolved, appID); err != nil {
-			warnWrapperFailure(appID, err)
-			return false
-		}
-		removeFlatpakWrapper(name)
-		return false
-	}
-	if err := common.LinkBin(name, filepath.Join(common.FlatpakWrapperDir(), name)); err != nil {
-		warnWrapperFailure(appID, err)
 	}
 	return false
+}
+
+// renameFlatpakWrapper moves a wrapper to a new name and drops the links to
+// the old one. Errors if the new name is already taken.
+func renameFlatpakWrapper(from, to string) error {
+	dir := common.FlatpakWrapperDir()
+	oldPath := filepath.Join(dir, from)
+	newPath := filepath.Join(dir, to)
+	if _, err := os.Lstat(newPath); err == nil {
+		return fmt.Errorf("cannot rename wrapper %q to %q: name already in use", from, to)
+	}
+	if err := common.UnlinkBin(oldPath); err != nil {
+		return err
+	}
+	return os.Rename(oldPath, newPath)
 }
 
 // warnWrapperFailure reports a wrapper that couldn't be reconciled. Runs on
@@ -447,17 +402,12 @@ func FlatpakInstall(tool string) (binName, appID string, err error) {
 		return "", "", fmt.Errorf("flatpak install failed")
 	}
 
-	// EnsureFlatpakWrapper's returned name is purely the wrapper file's
-	// on-disk name, which may be collision-suffixed (e.g. "flatseal-2" if
-	// "flatseal" is already some unrelated PATH binary) - that's a wrapper
-	// concern only and must never become the tool's identity in sat. The
-	// manifest key (and everything the user types/sees - sat update
-	// flatseal, sat list, ...) always stays the plain derived name.
-	if _, err := EnsureFlatpakWrapper(appID); err != nil {
+	binName = FlatpakToolName(appID, FlatpakDisplayNames())
+	if err := EnsureFlatpakWrapper(appID, binName); err != nil {
 		return "", "", err
 	}
 
-	return FlatpakToolName(appID, FlatpakDisplayNames()), appID, nil
+	return binName, appID, nil
 }
 
 // FlatpakUninstall removes a flatpak app and its launcher wrapper. Prefers

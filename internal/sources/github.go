@@ -116,12 +116,9 @@ func GitHubUninstall(pkg, source string) error {
 		}
 	}
 
-	home, _ := os.UserHomeDir()
-	var firstErr error
-	if err := common.UnlinkBin(pkg, filepath.Join(home, github.HuberBinDirRel)); err != nil {
-		firstErr = err
-	}
-	if err := os.Remove(filepath.Join(home, github.HuberBinDirRel, pkg)); err != nil && !os.IsNotExist(err) && firstErr == nil {
+	huberBin := filepath.Join(common.HuberBinDir(), pkg)
+	firstErr := common.UnlinkBin(huberBin)
+	if err := os.Remove(huberBin); err != nil && !os.IsNotExist(err) && firstErr == nil {
 		firstErr = err
 	}
 	return firstErr

@@ -117,32 +117,32 @@ func TestRewriteExec(t *testing.T) {
 	cases := []struct {
 		name         string
 		originalExec string
-		symlinkPath  string
+		command      string
 		want         string
 	}{
 		{
 			name:         "preserves field code",
 			originalExec: "AppRun --no-sandbox %U",
-			symlinkPath:  "/home/user/.local/bin/hydralauncher",
+			command:      "/home/user/.local/bin/hydralauncher",
 			want:         "/home/user/.local/bin/hydralauncher %U",
 		},
 		{
 			name:         "no field codes",
 			originalExec: "AppRun --headless",
-			symlinkPath:  "/home/user/.local/bin/foo",
+			command:      "/home/user/.local/bin/foo",
 			want:         "/home/user/.local/bin/foo",
 		},
 		{
 			name:         "multiple field codes",
 			originalExec: "AppRun %f %U",
-			symlinkPath:  "/bin/bar",
+			command:      "/bin/bar",
 			want:         "/bin/bar %f %U",
 		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := rewriteExec(c.originalExec, c.symlinkPath)
+			got := rewriteExec(c.originalExec, c.command)
 			if got != c.want {
 				t.Errorf("got %q, want %q", got, c.want)
 			}

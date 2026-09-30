@@ -21,10 +21,6 @@ import (
 // sed -E 's/[_-]([0-9]+\.[0-9]|v?[0-9]+).*//' (lib/sources/appimage.sh:89).
 var appImageVersionSuffix = regexp.MustCompile(`[_-]([0-9]+\.[0-9]|v?[0-9]+).*`)
 
-// appImageCollisionSuffix is appended to an AppImage's name when another
-// install already owns that name in ~/.local/bin.
-const appImageCollisionSuffix = "appimage"
-
 // githubReleaseAsset is a single asset attached to a GitHub release.
 type githubReleaseAsset struct {
 	Name               string `json:"name"`
@@ -42,8 +38,8 @@ type githubReleaseResponse struct {
 
 // AppImageInstall downloads the latest AppImage release asset for
 // repoPath (owner/repo) matching the current architecture, stores it in
-// common.AppImagesDir(), and symlinks it into common.LocalBin(). Returns
-// the resolved binary name for the caller to record in the manifest as
+// common.AppImagesDir(), and links it into common.LocalBin(). Returns the
+// natural binary name for the caller to record in the manifest as
 // appimage:owner/repo.
 func AppImageInstall(repoPath string) (binName string, err error) {
 	if os.Getenv(common.EnvSATDebug) != "" {
@@ -91,12 +87,8 @@ func AppImageInstall(repoPath string) (binName string, err error) {
 	}
 
 	appimageDir := common.AppImagesDir()
-	appName, err := common.ResolveBinName(cleanAppImageName(assetName, repoPath), appImageCollisionSuffix, appimageDir)
-	if err != nil {
-		return "", err
-	}
+	appName := cleanAppImageName(assetName, repoPath)
 	appimagePath := filepath.Join(appimageDir, appName)
-	symlinkPath := filepath.Join(common.LocalBin(), appName)
 
 	if os.Getenv(common.EnvSATDebug) != "" {
 		fmt.Fprintf(os.Stderr, "[debug]   downloading to %s...\n", appimagePath)
@@ -114,32 +106,31 @@ func AppImageInstall(repoPath string) (binName string, err error) {
 		return "", fmt.Errorf("failed to make appimage executable: %w", err)
 	}
 
-	if os.Getenv(common.EnvSATDebug) != "" {
-		fmt.Fprintf(os.Stderr, "[debug]   creating symlink %s\n", symlinkPath)
-	}
-	if err := common.LinkBin(appName, appimagePath); err != nil {
+	linkName, err := common.LinkBin(appimagePath)
+	if err != nil {
 		return "", err
+	}
+	if os.Getenv(common.EnvSATDebug) != "" {
+		fmt.Fprintf(os.Stderr, "[debug]   linked %s\n", filepath.Join(common.LocalBin(), linkName))
 	}
 
 	if os.Getenv(common.EnvSATDebug) != "" {
 		fmt.Fprintf(os.Stderr, "[debug]   appimage install successful: %s\n", appName)
 	}
 
-	InstallDesktopEntry(appimagePath, symlinkPath, appName, repoPath, true)
+	InstallDesktopEntry(appimagePath, appName, repoPath, true)
 
 	return appName, nil
 }
 
-// AppImageUninstall removes the symlink and the stored AppImage file.
-// Matches bash's rm -f semantics: missing files are not an error. The
-// symlink is only removed if it still points at an AppImage, so a different
-// source that took over the name keeps its launcher.
+// AppImageUninstall removes the links and the stored AppImage file. Missing
+// files are not an error.
 func AppImageUninstall(pkg, source string) error {
 	appimagePath := filepath.Join(common.AppImagesDir(), pkg)
 
 	removeDesktopEntry(pkg)
 
-	firstErr := common.UnlinkBin(pkg, common.AppImagesDir())
+	firstErr := common.UnlinkBin(appimagePath)
 	if err := os.Remove(appimagePath); err != nil && !os.IsNotExist(err) && firstErr == nil {
 		firstErr = err
 	}

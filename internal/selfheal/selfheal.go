@@ -66,6 +66,7 @@ func Run(command string) error {
 	// this is just the sequencing point.
 	sources.BackfillDesktopEntries()
 	sources.ReconcileWrappers()
+	common.ReconcileBinLinks()
 
 	if !skipDriftCommands[command] {
 		if _, err := drift.Ensure(); err != nil && os.Getenv(common.EnvSATDebug) != "" {
