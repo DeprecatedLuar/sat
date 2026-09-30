@@ -3,12 +3,14 @@ package sources
 // PrunedEntry is a manifest entry a source module has determined should be
 // removed, with the reason shown to the user.
 type PrunedEntry struct {
-	Tool   string
-	Reason string
+	Tool       string
+	SourceType string
+	Reason     string
 }
 
 // RepairedEntry is a manifest entry a source module has determined should
-// be rewritten with corrected metadata (e.g. a version fetched live).
+// be written or rewritten with corrected metadata (e.g. a version fetched
+// live, or an untracked artifact adopted).
 type RepairedEntry struct {
 	Tool      string
 	NewSource string

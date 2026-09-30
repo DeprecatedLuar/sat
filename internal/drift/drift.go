@@ -133,9 +133,9 @@ func Apply(drifts []Drift) (int, error) {
 	if len(drifts) == 0 {
 		return 0, nil
 	}
-	updates := make(map[string]string, len(drifts))
+	updates := make([]manifest.Entry, 0, len(drifts))
 	for _, d := range drifts {
-		updates[d.Tool] = d.NewSource()
+		updates = append(updates, manifest.Entry{Tool: d.Tool, Source: d.NewSource()})
 	}
 	return manifest.AddMany(updates)
 }

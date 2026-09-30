@@ -172,18 +172,18 @@ func findWrapperForAppID(appID string) (name string, ok bool) {
 }
 
 // listInstalledFlatpakAppIDs returns every currently installed flatpak app
-// ID (flatpak list --app --columns=application), or nil if flatpak isn't
-// installed or the command fails.
-func listInstalledFlatpakAppIDs() []string {
+// ID (flatpak list --app --columns=application), or an error if flatpak
+// isn't installed or the command fails.
+func listInstalledFlatpakAppIDs() ([]string, error) {
 	if _, err := exec.LookPath("flatpak"); err != nil {
-		return nil
+		return nil, fmt.Errorf("flatpak not installed")
 	}
 
 	var output bytes.Buffer
 	cmd := exec.Command("flatpak", "list", "--app", "--columns=application")
 	cmd.Stdout = &output
-	if cmd.Run() != nil {
-		return nil
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("flatpak list failed: %w", err)
 	}
 
 	var ids []string
@@ -193,7 +193,29 @@ func listInstalledFlatpakAppIDs() []string {
 			ids = append(ids, line)
 		}
 	}
-	return ids
+	return ids, nil
+}
+
+// FlatpakSnapshot is one `flatpak list` result shared by every per-invocation
+// flatpak reconciliation. OK is false when the list could not be obtained,
+// in which case Installed carries no information and must not be read as
+// "nothing is installed".
+type FlatpakSnapshot struct {
+	Installed map[string]bool
+	OK        bool
+}
+
+// SnapshotFlatpak queries the installed flatpak apps once.
+func SnapshotFlatpak() FlatpakSnapshot {
+	ids, err := listInstalledFlatpakAppIDs()
+	if err != nil {
+		return FlatpakSnapshot{}
+	}
+	installed := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		installed[id] = true
+	}
+	return FlatpakSnapshot{Installed: installed, OK: true}
 }
 
 // ReconcileWrappers keeps flatpak launcher wrappers in sync on every sat
@@ -208,18 +230,16 @@ func listInstalledFlatpakAppIDs() []string {
 // from another machine) isn't enough reason to create a wrapper that would
 // just fail at runtime - and without it, a wrapper created purely from the
 // manifest would be immediately removed again by the very next step below,
-// silently churning every run. No-ops entirely if flatpak isn't installed.
+// silently churning every run. No-ops entirely if the installed-app list
+// is unavailable (flatpak missing or failing).
 // This is the single entrypoint selfheal calls; all decision logic lives
 // here rather than in the caller.
-func ReconcileWrappers() (created, pruned int) {
-	if _, err := exec.LookPath("flatpak"); err != nil {
+func ReconcileWrappers(snap FlatpakSnapshot) (created, pruned int) {
+	if !snap.OK {
 		return 0, 0
 	}
 
-	installed := make(map[string]bool)
-	for _, id := range listInstalledFlatpakAppIDs() {
-		installed[id] = true
-	}
+	installed := snap.Installed
 	displayNames := FlatpakDisplayNames()
 
 	if entries, err := manifest.All(); err == nil {
@@ -417,7 +437,8 @@ func FlatpakInstall(tool string) (binName, appID string, err error) {
 func FlatpakUninstall(pkg, sourceStr string) error {
 	appID := manifest.GetSourceIdentity(sourceStr)
 	if appID == "" {
-		for _, id := range listInstalledFlatpakAppIDs() {
+		ids, _ := listInstalledFlatpakAppIDs()
+		for _, id := range ids {
 			if strings.Contains(strings.ToLower(id), strings.ToLower(pkg)) {
 				appID = id
 				break

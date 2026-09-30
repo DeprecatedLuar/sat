@@ -209,7 +209,7 @@ func NixCheckOutdated(tool string, sourceType string) (current, latest string, e
 	}
 
 	// Try manifest first, fall back to nix-env query
-	if sourceStr := manifest.Get(tool); sourceStr != "" {
+	if sourceStr := manifest.Get(tool, sourceType); sourceStr != "" {
 		current = manifest.GetSourceVersion(sourceStr)
 	}
 	if current == "" {

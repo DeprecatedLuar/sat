@@ -180,7 +180,7 @@ func AppImageCheckOutdated(tool, repo string) (current, latest string, err error
 
 	appimagePath := filepath.Join(common.AppImagesDir(), tool)
 
-	current = manifest.GetSourceVersion(manifest.Get(tool))
+	current = manifest.GetSourceVersion(manifest.Get(tool, common.SourceAppImage))
 	if current == "" {
 		if !fileExists(appimagePath) {
 			return "", "", fmt.Errorf("appimage not installed")

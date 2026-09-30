@@ -167,7 +167,7 @@ func GitHubCheckOutdated(tool, repo string) (current, latest string, err error) 
 		return "", "", fmt.Errorf("huber not installed")
 	}
 
-	current = manifest.GetSourceVersion(manifest.Get(tool))
+	current = manifest.GetSourceVersion(manifest.Get(tool, common.SourceGH))
 
 	if current == "" {
 		var out bytes.Buffer

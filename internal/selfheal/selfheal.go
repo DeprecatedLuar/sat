@@ -9,6 +9,7 @@ import (
 	"github.com/DeprecatedLuar/sat/internal/config"
 	"github.com/DeprecatedLuar/sat/internal/drift"
 	"github.com/DeprecatedLuar/sat/internal/manifest"
+	"github.com/DeprecatedLuar/sat/internal/scanner"
 	"github.com/DeprecatedLuar/sat/internal/sources"
 )
 
@@ -65,7 +66,9 @@ func Run(command string) error {
 	// Each source package owns its own reconciliation logic end to end;
 	// this is just the sequencing point.
 	sources.BackfillDesktopEntries()
-	sources.ReconcileWrappers()
+	flatpak := sources.SnapshotFlatpak()
+	sources.ReconcileWrappers(flatpak)
+	scanner.ApplyExactIssues(flatpak)
 	common.ReconcileBinLinks()
 
 	if !skipDriftCommands[command] {

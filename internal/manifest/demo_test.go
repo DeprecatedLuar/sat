@@ -31,7 +31,7 @@ func TestManifestDemo(t *testing.T) {
 
 	// Test 2: Get individual package
 	fmt.Println("\n2. Getting individual package:")
-	if src := Get("ripgrep"); src != "" {
+	if src := Get("ripgrep", "cargo"); src != "" {
 		fmt.Printf("   ripgrep: %s\n", src)
 		fmt.Printf("   - Source type: %s\n", GetSourceType(src))
 		fmt.Printf("   - Version: %s\n", GetSourceVersion(src))
@@ -39,14 +39,15 @@ func TestManifestDemo(t *testing.T) {
 
 	// Test 3: Check if package exists
 	fmt.Println("\n3. Checking package existence:")
-	fmt.Printf("   Has ripgrep? %v\n", Has("ripgrep"))
-	fmt.Printf("   Has nonexistent? %v\n", Has("nonexistent"))
+	fmt.Printf("   Has ripgrep? %v\n", Has("ripgrep", "cargo"))
+	fmt.Printf("   Has nonexistent? %v\n", Has("nonexistent", "cargo"))
 
 	// Test 4: Check multiple packages
 	fmt.Println("\n4. Checking multiple packages:")
 	tools := []string{"ripgrep", "fd", "bat", "vim"}
 	for _, tool := range tools {
-		if src := Get(tool); src != "" {
+		if found := Lookup(tool); len(found) > 0 {
+			src := found[0].Source
 			sourceType := GetSourceType(src)
 			version := GetSourceVersion(src)
 			fmt.Printf("   %s [%s] v%s\n", tool, sourceType, version)
@@ -55,11 +56,11 @@ func TestManifestDemo(t *testing.T) {
 
 	// Test 5: Remove a package
 	fmt.Println("\n5. Removing a package:")
-	if err := Remove("fd"); err != nil {
+	if err := Remove("fd", "cargo"); err != nil {
 		t.Errorf("Failed to remove fd: %v", err)
 	}
 	fmt.Println("   ✓ Removed fd")
-	fmt.Printf("   Has fd? %v\n", Has("fd"))
+	fmt.Printf("   Has fd? %v\n", Has("fd", "cargo"))
 
 	// Test 6: Source string parsing
 	fmt.Println("\n6. Source string parsing:")

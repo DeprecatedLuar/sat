@@ -239,7 +239,7 @@ func BackfillDesktopEntries() {
 			continue
 		}
 
-		repoPath := manifest.GetSourceIdentity(manifest.Get(name))
+		repoPath := manifest.GetSourceIdentity(manifest.Get(name, common.SourceAppImage))
 
 		InstallDesktopEntry(appimagePath, name, repoPath, false)
 	}

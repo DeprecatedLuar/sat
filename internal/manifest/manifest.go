@@ -39,15 +39,52 @@ func EnsureManifest(path string) error {
 	return nil
 }
 
-// entry is a single tool=source manifest line, kept in file order
-type entry struct {
-	tool   string
-	source string
+// Entry is a single tool=source manifest record, in file order. The pair
+// (Tool, canonical source type) is its identity.
+type Entry struct {
+	Tool   string
+	Source string
+}
+
+// sourceTypeAliases maps source types recorded under a legacy or per-OS name
+// to the canonical type they are the same ecosystem as. "nixos" is
+// deliberately absent: declarative NixOS packages are distinct from nix profile
+// installs.
+var sourceTypeAliases = map[string]string{
+	"rust":   "cargo",
+	"github": "gh",
+	"apt":    "system",
+	"pacman": "system",
+	"apk":    "system",
+	"dnf":    "system",
+}
+
+// CanonicalSourceType resolves a source type to the canonical form used to
+// compare manifest identities.
+func CanonicalSourceType(sourceType string) string {
+	if canonical, ok := sourceTypeAliases[sourceType]; ok {
+		return canonical
+	}
+	return sourceType
+}
+
+// identityKey is the canonical (tool, source type) pair of an entry.
+type identityKey struct {
+	tool       string
+	sourceType string
+}
+
+func keyOf(e Entry) identityKey {
+	return identityKey{tool: e.Tool, sourceType: CanonicalSourceType(GetSourceType(e.Source))}
+}
+
+func newKey(tool, sourceType string) identityKey {
+	return identityKey{tool: tool, sourceType: CanonicalSourceType(sourceType)}
 }
 
 // readEntries reads the manifest file into an ordered slice of entries.
 // Missing files are treated as empty (no entries), matching prior Get/Has behavior.
-func readEntries(path string) ([]entry, error) {
+func readEntries(path string) ([]Entry, error) {
 	file, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -57,7 +94,7 @@ func readEntries(path string) ([]entry, error) {
 	}
 	defer file.Close()
 
-	var entries []entry
+	var entries []Entry
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -66,7 +103,7 @@ func readEntries(path string) ([]entry, error) {
 		}
 		parts := strings.SplitN(line, ManifestDelimiter, ManifestFieldCount)
 		if len(parts) == ManifestFieldCount {
-			entries = append(entries, entry{tool: parts[0], source: parts[1]})
+			entries = append(entries, Entry{Tool: parts[0], Source: parts[1]})
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -80,7 +117,7 @@ func readEntries(path string) ([]entry, error) {
 // concurrent reader never observes a truncated manifest (rename(2) is
 // atomic within one filesystem) - readEntries otherwise cannot distinguish
 // a torn write from a legitimately smaller manifest.
-func writeEntries(path string, entries []entry) error {
+func writeEntries(path string, entries []Entry) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".manifest-*")
 	if err != nil {
@@ -89,7 +126,7 @@ func writeEntries(path string, entries []entry) error {
 	tmpPath := tmp.Name()
 
 	for _, e := range entries {
-		if _, err := fmt.Fprintf(tmp, "%s%s%s\n", e.tool, ManifestDelimiter, e.source); err != nil {
+		if _, err := fmt.Fprintf(tmp, "%s%s%s\n", e.Tool, ManifestDelimiter, e.Source); err != nil {
 			tmp.Close()
 			os.Remove(tmpPath)
 			return err
@@ -117,7 +154,8 @@ func writeEntries(path string, entries []entry) error {
 
 // Add adds a tool to the system manifest
 // Format: tool=source:identity:version
-// Existing tools are updated in place (position preserved); new tools are appended.
+// An entry is identified by (tool, source type): the matching line is
+// updated in place (position preserved), a new pair is appended.
 func Add(tool, source string) error {
 	manifestMutex.Lock()
 	defer manifestMutex.Unlock()
@@ -132,30 +170,31 @@ func Add(tool, source string) error {
 		return err
 	}
 
+	want := newKey(tool, GetSourceType(source))
 	found := false
 	for i := range entries {
-		if entries[i].tool == tool {
-			entries[i].source = source
+		if keyOf(entries[i]) == want {
+			entries[i].Source = source
 			found = true
 			break
 		}
 	}
 	if !found {
-		entries = append(entries, entry{tool: tool, source: source})
+		entries = append(entries, Entry{Tool: tool, Source: source})
 	}
 
 	return writeEntries(path, entries)
 }
 
-// AddMany applies several tool=source updates in a single read-modify-write,
-// so N drift corrections cost one manifest rewrite instead of N. Per-entry
-// semantics match Add: an existing tool is updated in place (position
-// preserved), a tool not yet tracked is appended. New tools are appended in
-// sorted order so the result is deterministic. A tool already recording the
-// given source is left untouched and does not count toward the returned
-// total; when nothing actually changes, no write is performed at all.
-// Returns the number of entries changed.
-func AddMany(updates map[string]string) (int, error) {
+// AddMany applies several entry updates in a single read-modify-write, so N
+// drift corrections cost one manifest rewrite instead of N. Per-entry
+// semantics match Add: an existing (tool, source type) is updated in place
+// (position preserved), a pair not yet tracked is appended. New pairs are
+// appended sorted by tool then source type so the result is deterministic.
+// An entry already recording the given source is left untouched and does not
+// count toward the returned total; when nothing actually changes, no write
+// is performed at all. Returns the number of entries changed.
+func AddMany(updates []Entry) (int, error) {
 	if len(updates) == 0 {
 		return 0, nil
 	}
@@ -173,33 +212,39 @@ func AddMany(updates map[string]string) (int, error) {
 		return 0, err
 	}
 
-	remaining := make(map[string]string, len(updates))
-	for tool, source := range updates {
-		remaining[tool] = source
+	remaining := make(map[identityKey]string, len(updates))
+	for _, u := range updates {
+		remaining[keyOf(u)] = u.Source
 	}
 
 	changed := 0
 	for i := range entries {
-		source, ok := remaining[entries[i].tool]
+		k := keyOf(entries[i])
+		source, ok := remaining[k]
 		if !ok {
 			continue
 		}
-		delete(remaining, entries[i].tool)
-		if entries[i].source == source {
+		delete(remaining, k)
+		if entries[i].Source == source {
 			continue
 		}
-		entries[i].source = source
+		entries[i].Source = source
 		changed++
 	}
 
 	if len(remaining) > 0 {
-		newTools := make([]string, 0, len(remaining))
-		for tool := range remaining {
-			newTools = append(newTools, tool)
+		newKeys := make([]identityKey, 0, len(remaining))
+		for k := range remaining {
+			newKeys = append(newKeys, k)
 		}
-		sort.Strings(newTools)
-		for _, tool := range newTools {
-			entries = append(entries, entry{tool: tool, source: remaining[tool]})
+		sort.Slice(newKeys, func(i, j int) bool {
+			if newKeys[i].tool != newKeys[j].tool {
+				return newKeys[i].tool < newKeys[j].tool
+			}
+			return newKeys[i].sourceType < newKeys[j].sourceType
+		})
+		for _, k := range newKeys {
+			entries = append(entries, Entry{Tool: k.tool, Source: remaining[k]})
 			changed++
 		}
 	}
@@ -211,8 +256,9 @@ func AddMany(updates map[string]string) (int, error) {
 	return changed, writeEntries(path, entries)
 }
 
-// Get retrieves the source string for a tool
-func Get(tool string) string {
+// Get retrieves the source string recorded for (tool, sourceType), or ""
+// when that pair is not tracked.
+func Get(tool, sourceType string) string {
 	manifestMutex.Lock()
 	defer manifestMutex.Unlock()
 
@@ -220,23 +266,37 @@ func Get(tool string) string {
 	if err != nil {
 		return ""
 	}
+	want := newKey(tool, sourceType)
 	for _, e := range entries {
-		if e.tool == tool {
-			return e.source
+		if keyOf(e) == want {
+			return e.Source
 		}
 	}
 	return ""
 }
 
-// Has checks if a tool exists in the manifest
-func Has(tool string) bool {
-	return Get(tool) != ""
+// Has checks if (tool, sourceType) exists in the manifest
+func Has(tool, sourceType string) bool {
+	return Get(tool, sourceType) != ""
 }
 
-// Entry is a single tool=source manifest record, in file order
-type Entry struct {
-	Tool   string
-	Source string
+// Lookup returns every entry recorded for a tool name, in file order. It is
+// the only name-only lookup; everything else addresses a (tool, source type).
+func Lookup(tool string) []Entry {
+	manifestMutex.Lock()
+	defer manifestMutex.Unlock()
+
+	entries, err := readEntries(ManifestPath())
+	if err != nil {
+		return nil
+	}
+	var found []Entry
+	for _, e := range entries {
+		if e.Tool == tool {
+			found = append(found, e)
+		}
+	}
+	return found
 }
 
 // All returns every entry in the system manifest, in file order
@@ -244,20 +304,12 @@ func All() ([]Entry, error) {
 	manifestMutex.Lock()
 	defer manifestMutex.Unlock()
 
-	raw, err := readEntries(ManifestPath())
-	if err != nil {
-		return nil, err
-	}
-
-	entries := make([]Entry, len(raw))
-	for i, e := range raw {
-		entries[i] = Entry{Tool: e.tool, Source: e.source}
-	}
-	return entries, nil
+	return readEntries(ManifestPath())
 }
 
-// Remove removes a tool from the manifest
-func Remove(tool string) error {
+// Remove removes the entry for (tool, sourceType), leaving other sources of
+// the same tool name untouched.
+func Remove(tool, sourceType string) error {
 	manifestMutex.Lock()
 	defer manifestMutex.Unlock()
 
@@ -267,9 +319,10 @@ func Remove(tool string) error {
 		return err
 	}
 
+	want := newKey(tool, sourceType)
 	filtered := entries[:0]
 	for _, e := range entries {
-		if e.tool != tool {
+		if keyOf(e) != want {
 			filtered = append(filtered, e)
 		}
 	}

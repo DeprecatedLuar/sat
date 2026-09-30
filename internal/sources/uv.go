@@ -174,7 +174,7 @@ func UvCheckOutdated(tool string) (current, latest string, err error) {
 		return "", "", fmt.Errorf("uv not installed")
 	}
 
-	if sourceStr := manifest.Get(tool); sourceStr != "" {
+	if sourceStr := manifest.Get(tool, common.SourceUV); sourceStr != "" {
 		current = manifest.GetSourceVersion(sourceStr)
 	}
 	if current == "" {

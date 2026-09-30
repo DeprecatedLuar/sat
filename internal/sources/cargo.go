@@ -262,7 +262,7 @@ func CargoCheckOutdated(tool string) (current, latest string, err error) {
 	}
 
 	// Try manifest first, fall back to querying cargo
-	if sourceStr := manifest.Get(tool); sourceStr != "" {
+	if sourceStr := manifest.Get(tool, common.SourceCargo); sourceStr != "" {
 		current = manifest.GetSourceVersion(sourceStr)
 	}
 	if current == "" {

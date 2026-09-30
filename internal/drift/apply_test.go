@@ -37,11 +37,11 @@ func TestApply(t *testing.T) {
 		t.Errorf("Apply() changed = %d, want 1", changed)
 	}
 
-	if got := manifest.Get("codex"); got != "npm:@openai/codex:0.153.4" {
+	if got := manifest.Get("codex", "npm"); got != "npm:@openai/codex:0.153.4" {
 		t.Errorf("Get(codex) = %q, want %q", got, "npm:@openai/codex:0.153.4")
 	}
 	// claude was not in the drift list and must be untouched.
-	if got := manifest.Get("claude"); got != "npm:@anthropic-ai/claude-code:2.1.259" {
+	if got := manifest.Get("claude", "npm"); got != "npm:@anthropic-ai/claude-code:2.1.259" {
 		t.Errorf("Get(claude) = %q, want unchanged", got)
 	}
 }

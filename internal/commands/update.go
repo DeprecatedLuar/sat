@@ -30,28 +30,8 @@ const (
 	sourceAliasGitHub = "github"
 )
 
-// updateFlagSource maps a CLI flag to the source type it scopes
-// sat update to (list.go's filterAliases is the read-only List equivalent).
-var updateFlagSource = map[string]string{
-	"--cargo":    common.SourceCargo,
-	"--rust":     common.SourceCargo,
-	"--brew":     common.SourceBrew,
-	"--nix":      common.SourceNix,
-	"--apt":      common.SourceSystem,
-	"--system":   common.SourceSystem,
-	"--sys":      common.SourceSystem,
-	"--gh":       common.SourceGH,
-	"--github":   common.SourceGH,
-	"--appimage": common.SourceAppImage,
-	"--flatpak":  common.SourceFlatpak,
-	"--npm":      common.SourceNPM,
-	"--uv":       common.SourceUV,
-	"--go":       common.SourceGo,
-	"--sat":      common.SourceSat,
-}
-
-// HandleUpdate routes between self-update, explicit tool updates, and the
-// interactive outdated-scan flow.
+// HandleUpdate routes between self-update and the outdated-scan flow, which
+// serves bare, named and source-filtered updates alike.
 func HandleUpdate(args []string, version, repo string) error {
 	if len(args) == 1 && args[0] == "sat" {
 		return HandleSelfUpdate(version, repo)
@@ -74,8 +54,8 @@ func HandleUpdate(args []string, version, repo string) error {
 			skipConfirm = true
 			continue
 		}
-		if src, ok := updateFlagSource[arg]; ok {
-			sourceFilter = src
+		if sel, ok := common.LookupSourceFlag(arg); ok {
+			sourceFilter = sel.Type
 			continue
 		}
 		if strings.HasPrefix(arg, "--") || strings.HasPrefix(arg, "-") {
@@ -84,27 +64,14 @@ func HandleUpdate(args []string, version, repo string) error {
 		tools = append(tools, arg)
 	}
 
-	if len(tools) > 0 {
-		for _, tool := range tools {
-			updateOne(tool)
-		}
-		return nil
-	}
-
-	return updateOutdated(sourceFilter, skipConfirm, version, repo)
+	return updateOutdated(tools, sourceFilter, skipConfirm, version, repo)
 }
 
-// updateOne updates a single tool via its recorded source, mirroring
+// updateEntry updates one tracked entry via its recorded source, mirroring
 // uninstall.go's removeViaSource dispatch shape. On success, re-records the
-// tool's new version in the manifest so the next outdated scan compares
+// entry's new version in the manifest so the next outdated scan compares
 // against the post-update version instead of the stale pre-update one.
-func updateOne(tool string) {
-	sourceStr := manifest.Get(tool)
-	if sourceStr == "" {
-		ui.StatusFail(fmt.Sprintf("%s is not tracked by sat", tool))
-		return
-	}
-
+func updateEntry(tool, sourceStr string) {
 	var newVersion string
 	err := ui.RunWithSpinner(tool, sourceStr, func() error {
 		v, err := updateViaSource(tool, sourceStr)
@@ -119,8 +86,8 @@ func updateOne(tool string) {
 	sourceType := manifest.GetSourceType(sourceStr)
 	identity := manifest.GetSourceIdentity(sourceStr)
 	newSourceStr := manifest.BuildSourceString(sourceType, identity, newVersion)
-	if err := manifest.Add(tool, newSourceStr); err != nil && os.Getenv(common.EnvSATDebug) != "" {
-		fmt.Fprintf(os.Stderr, "%s failed to record %s's new version in manifest: %v\n", common.DebugPrefix, tool, err)
+	if err := manifest.Add(tool, newSourceStr); err != nil {
+		fmt.Fprintf(os.Stderr, "sat: warning: %s updated but failed to record new version in manifest: %v\n", tool, err)
 	}
 
 	ui.StatusOK(tool, newSourceStr)
@@ -257,25 +224,66 @@ type outdatedEntry struct {
 	identity                      string
 }
 
-// updateOutdated scans the manifest for outdated tools, batched per source
+// targetEntries returns the manifest entries an update covers: every entry
+// when names is empty, otherwise every entry tracked under each name (all
+// sources of a name, never an ambiguity error). Unknown names are reported
+// and skipped. sourceFilter, when set, keeps only that source type.
+func targetEntries(names []string, sourceFilter string) ([]manifest.Entry, error) {
+	var entries []manifest.Entry
+	if len(names) == 0 {
+		all, err := manifest.All()
+		if err != nil {
+			return nil, err
+		}
+		entries = all
+	}
+	seen := make(map[string]bool)
+	for _, name := range names {
+		found, err := resolveTargets(name, "")
+		if err != nil {
+			ui.StatusFail(err.Error())
+			continue
+		}
+		for _, e := range found {
+			if !seen[e.Tool+"="+e.Source] {
+				seen[e.Tool+"="+e.Source] = true
+				entries = append(entries, e)
+			}
+		}
+	}
+
+	if sourceFilter == "" {
+		return entries, nil
+	}
+	var filtered []manifest.Entry
+	for _, e := range entries {
+		if manifest.CanonicalSourceType(manifest.GetSourceType(e.Source)) == sourceFilter {
+			filtered = append(filtered, e)
+		}
+	}
+	return filtered, nil
+}
+
+// updateOutdated scans the targeted manifest entries for outdated tools, batched per source
 // type in parallel (mirrors search.go's searchAllSources concurrency
 // shape), prints what's outdated, and offers a single bulk confirmation
 // before updating everything shown. Each source-type group is checked
 // sequentially inside its own goroutine so a source with many tracked
 // tools (e.g. cargo hitting crates.io per package) doesn't burst a remote
 // registry with concurrent requests; only the source types run in parallel.
-func updateOutdated(sourceFilter string, skipConfirm bool, version, repo string) error {
-	entries, err := manifest.All()
+func updateOutdated(names []string, sourceFilter string, skipConfirm bool, version, repo string) error {
+	entries, err := targetEntries(names, sourceFilter)
 	if err != nil {
 		return err
+	}
+	named := len(names) > 0
+	if named && len(entries) == 0 {
+		return nil
 	}
 
 	grouped := make(map[string][]manifest.Entry)
 	for _, e := range entries {
 		sourceType := manifest.GetSourceType(e.Source)
-		if sourceFilter != "" && sourceType != sourceFilter {
-			continue
-		}
 		grouped[sourceType] = append(grouped[sourceType], e)
 	}
 
@@ -284,6 +292,9 @@ func updateOutdated(sourceFilter string, skipConfirm bool, version, repo string)
 	flatpakEntries := grouped[common.SourceFlatpak]
 	delete(grouped, common.SourceFlatpak)
 	checkFlatpak := sourceFilter == "" || sourceFilter == common.SourceFlatpak
+	if named {
+		checkFlatpak = len(flatpakEntries) > 0
+	}
 
 	var mu sync.Mutex
 	var outdated []outdatedEntry
@@ -310,11 +321,15 @@ func updateOutdated(sourceFilter string, skipConfirm bool, version, repo string)
 			defer wg.Done()
 			fpOutdated := collectFlatpakOutdated(flatpakEntries)
 			mu.Lock()
-			outdated = append(outdated, fpOutdated...)
+			for _, o := range fpOutdated {
+				if !named || !o.dep {
+					outdated = append(outdated, o)
+				}
+			}
 			mu.Unlock()
 		}()
 	}
-	if sourceFilter == "" || sourceFilter == common.SourceSat {
+	if !named && (sourceFilter == "" || sourceFilter == common.SourceSat) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -393,7 +408,7 @@ func updateOutdated(sourceFilter string, skipConfirm bool, version, repo string)
 			depRefs = append(depRefs, o.identity)
 			continue
 		}
-		updateOne(o.tool)
+		updateEntry(o.tool, o.source)
 	}
 	if len(depRefs) > 0 {
 		label := fmt.Sprintf("%d flatpak runtimes", len(depRefs))

@@ -193,7 +193,7 @@ func BrewCheckOutdated(tool string) (current, latest string, err error) {
 	}
 
 	// Try manifest first
-	if sourceStr := manifest.Get(tool); sourceStr != "" {
+	if sourceStr := manifest.Get(tool, common.SourceBrew); sourceStr != "" {
 		current = manifest.GetSourceVersion(sourceStr)
 	}
 
@@ -375,7 +375,7 @@ func BrewManifestIssues() ManifestIssues {
 			continue
 		}
 		if !leaves[e.Tool] {
-			issues.Prune = append(issues.Prune, PrunedEntry{Tool: e.Tool, Reason: "brew dep"})
+			issues.Prune = append(issues.Prune, PrunedEntry{Tool: e.Tool, SourceType: common.SourceBrew, Reason: "brew dep"})
 		}
 	}
 

@@ -2,43 +2,24 @@ package commands
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 
+	"github.com/DeprecatedLuar/sat/internal/common"
 	"github.com/DeprecatedLuar/sat/internal/manifest"
 	"github.com/DeprecatedLuar/sat/internal/ui"
 )
 
-// filterAliases maps a --flag source filter argument to the set of
-// normalized source-type/display-name tokens it should match against.
-// Mirrors installFlagSource's --flag convention so a single invocation can
-// combine multiple filters, e.g. "sat ls --flatpak --nix".
-var filterAliases = map[string][]string{
-	"--fpk": {"flatpak"}, "--flatpak": {"flatpak"},
-	"--img": {"appimage"}, "--appimage": {"appimage"},
-	"--sys": {"system"}, "--system": {"system"},
-	"--nix": {"nix", "nixos"}, "--nixos": {"nix", "nixos"},
-	"--gh": {"github", "repo", "gh"}, "--github": {"github", "repo", "gh"},
-	"--npm": {"npm", "node"}, "--node": {"npm", "node"},
-	"--py": {"python", "uv"}, "--python": {"python", "uv"}, "--uv": {"python", "uv"},
-	"--cargo": {"cargo", "rust"}, "--rust": {"cargo", "rust"},
-	"--go":     {"go"},
-	"--brew":   {"brew"},
-	"--sat":    {"sat"},
-	"--manual": {"manual"},
-}
-
 // List displays tracked packages from the system manifest, optionally
-// filtered by source, grouped by source with the largest group first,
-// and prunes any entry whose binary is no longer on PATH.
+// filtered by source, grouped by source with the largest group first.
+// Display only: manifest maintenance belongs to selfheal and scan.
 func List(args []string) error {
 	var filters []string
 	for _, arg := range args {
-		aliases, ok := filterAliases[arg]
+		sel, ok := common.LookupSourceFlag(arg)
 		if !ok {
 			return fmt.Errorf("unknown source filter: %s", arg)
 		}
-		filters = append(filters, aliases...)
+		filters = append(filters, sel.ListTokens...)
 	}
 
 	entries, err := manifest.All()
@@ -46,13 +27,8 @@ func List(args []string) error {
 		return err
 	}
 
-	var stale []string
 	var shown []manifest.Entry
 	for _, e := range entries {
-		if _, err := exec.LookPath(e.Tool); err != nil {
-			stale = append(stale, e.Tool)
-			continue
-		}
 		if matchesFilter(e.Source, filters) {
 			shown = append(shown, e)
 		}
@@ -60,14 +36,6 @@ func List(args []string) error {
 
 	if len(shown) > 0 {
 		displayGrouped(shown)
-	}
-
-	if len(stale) > 0 {
-		fmt.Println()
-		fmt.Printf("Cleaning %d stale entries...\n", len(stale))
-		for _, tool := range stale {
-			manifest.Remove(tool)
-		}
 	}
 
 	if len(shown) == 0 {

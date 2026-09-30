@@ -10,43 +10,50 @@ import (
 	"github.com/DeprecatedLuar/sat/internal/ui"
 )
 
-const uninstallUsage = "usage: sat uninstall <tool> [<tool> ...]"
+const uninstallUsage = "usage: sat uninstall <tool>[:source] [<tool>[:source] ...] [--<source>]"
 
-// Uninstall removes one or more tools: looks up each tool's recorded
-// source in the manifest, delegates removal to that source's own
-// uninstall pipeline, then drops it from the manifest on success.
+// Uninstall removes one or more tools: resolves each spec to exactly one
+// manifest entry, delegates removal to that entry's source pipeline, then
+// drops the entry from the manifest on success.
 func Uninstall(args []string) error {
-	if len(args) == 0 {
+	specs := scopeSpecs(args)
+	if len(specs) == 0 {
 		return fmt.Errorf(uninstallUsage)
 	}
 
-	for _, tool := range args {
-		uninstallOne(tool)
+	for _, s := range specs {
+		uninstallOne(s)
 	}
 
 	return nil
 }
 
-func uninstallOne(tool string) {
-	sourceStr := manifest.Get(tool)
-	if sourceStr == "" {
-		ui.StatusFail(fmt.Sprintf("%s is not tracked by sat", tool))
+func uninstallOne(s scopedSpec) {
+	entries, err := resolveTargets(s.spec, s.source)
+	if err != nil {
+		ui.StatusFail(err.Error())
+		return
+	}
+	name, _ := common.ParseToolSpec(s.spec)
+	entry, err := requireOne(name, entries)
+	if err != nil {
+		ui.StatusFail(err.Error())
 		return
 	}
 
-	err := ui.RunWithSpinner(tool, sourceStr, func() error {
-		return removeViaSource(tool, sourceStr)
+	err = ui.RunWithSpinner(entry.Tool, entry.Source, func() error {
+		return removeViaSource(entry.Tool, entry.Source)
 	})
 	if err != nil {
-		ui.StatusError(tool, sourceStr, err.Error())
+		ui.StatusError(entry.Tool, entry.Source, err.Error())
 		return
 	}
 
-	if err := manifest.Remove(tool); err != nil {
-		fmt.Fprintf(os.Stderr, "sat: warning: %s removed but failed to update manifest: %v\n", tool, err)
+	if err := manifest.Remove(entry.Tool, manifest.GetSourceType(entry.Source)); err != nil {
+		fmt.Fprintf(os.Stderr, "sat: warning: %s removed but failed to update manifest: %v\n", entry.Tool, err)
 	}
 
-	ui.StatusRemoved(tool, sourceStr)
+	ui.StatusRemoved(entry.Tool, entry.Source)
 }
 
 // removeViaSource dispatches to the source-specific uninstall pipeline

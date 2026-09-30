@@ -11,23 +11,6 @@ const (
 	ToolSpecDelimiter  = ":"
 	ToolSpecFieldCount = 2
 
-	// Source type aliases
-	AliasRs      = "rs"
-	AliasRust    = "rust"
-	AliasPy      = "py"
-	AliasPython  = "python"
-	AliasJs      = "js"
-	AliasNode    = "node"
-	AliasSys     = "sys"
-	AliasSystem  = "system"
-	AliasFpk     = "fpk"
-	AliasFlatpak = "flatpak"
-	AliasGh      = "gh"
-	AliasGithub  = "github"
-	AliasRelease = "release"
-	AliasRel     = "rel"
-	AliasImg     = "img"
-
 	// Source types
 	SourceCargo      = "cargo"
 	SourceUV         = "uv"
@@ -81,35 +64,10 @@ func ParseToolSpec(spec string) (name, source string) {
 	name = parts[0]
 	src := parts[1]
 
-	// Map aliases to actual sources
-	switch src {
-	case AliasPy, AliasPython:
-		source = SourceUV
-	case AliasRs, AliasRust:
-		source = SourceCargo
-	case AliasJs, AliasNode, SourceNPM:
-		source = SourceNPM
-	case AliasSys, AliasSystem:
-		source = SourceSystem
-	case SourceGo:
-		source = SourceGo
-	case SourceBrew:
-		source = SourceBrew
-	case SourceNix:
-		source = SourceNix
-	case AliasFpk, AliasFlatpak:
-		source = SourceFlatpak
-	case AliasGh, AliasGithub:
-		source = SourceGH
-	case AliasRelease, AliasRel:
-		source = SourceGHRelease
-	case AliasImg, SourceAppImage:
-		source = SourceGHAppImage
-	default:
-		source = src
+	if sel, ok := LookupSourceAlias(src); ok {
+		return name, sel.Route
 	}
-
-	return name, source
+	return name, src
 }
 
 // IsNpmScopedPackage reports whether spec has the shape of an npm scoped

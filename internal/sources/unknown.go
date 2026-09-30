@@ -8,6 +8,10 @@ import (
 	"github.com/DeprecatedLuar/sat/internal/manifest"
 )
 
+// unknownSourceType is the source type recorded for binaries scan could not
+// attribute to a package manager.
+const unknownSourceType = "unknown"
+
 // UnknownUninstall removes a manually-placed binary that scan couldn't
 // attribute to any package manager. source's identity field is the
 // resolved absolute path recorded at scan time (see scanner.ScanLocalBin).
@@ -43,13 +47,13 @@ func UnknownManifestIssues() ManifestIssues {
 	}
 
 	for _, e := range entries {
-		if manifest.GetSourceType(e.Source) != "unknown" {
+		if manifest.GetSourceType(e.Source) != unknownSourceType {
 			continue
 		}
 
 		path := manifest.GetSourceIdentity(e.Source)
 		if path == "" || !fileExists(path) {
-			issues.Prune = append(issues.Prune, PrunedEntry{Tool: e.Tool, Reason: "missing"})
+			issues.Prune = append(issues.Prune, PrunedEntry{Tool: e.Tool, SourceType: unknownSourceType, Reason: reasonMissing})
 		}
 	}
 

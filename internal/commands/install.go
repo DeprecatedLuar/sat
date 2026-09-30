@@ -14,27 +14,7 @@ import (
 	"github.com/DeprecatedLuar/sat/internal/ui"
 )
 
-const installUsage = "usage: sat install <program>[:source] ... [--system|--rust|--python|--node|--go|--brew|--nix|--flatpak|--gh] <program> ..."
-
-// installFlagSource maps a CLI flag to the source it forces for every spec
-// that doesn't carry its own ":source" suffix (bash's DEFAULT_SOURCE).
-var installFlagSource = map[string]string{
-	"--system":  common.SourceSystem,
-	"--sys":     common.SourceSystem,
-	"--rust":    common.SourceCargo,
-	"--rs":      common.SourceCargo,
-	"--python":  common.SourceUV,
-	"--py":      common.SourceUV,
-	"--node":    common.SourceNPM,
-	"--npm":     common.SourceNPM,
-	"--js":      common.SourceNPM,
-	"--go":      common.SourceGo,
-	"--brew":    common.SourceBrew,
-	"--nix":     common.SourceNix,
-	"--flatpak": common.SourceFlatpak,
-	"--gh":      common.SourceGH,
-	"--github":  common.SourceGH,
-}
+const installUsage = "usage: sat install <program>[:source] ... [--system|--rust|--python|--node|--go|--brew|--nix|--flatpak|--appimage|--gh] <program> ..."
 
 // installResult is what a successful install attempt (direct-repo, forced
 // source, or one step of the fallback chain) needs to record in the
@@ -46,13 +26,6 @@ type installResult struct {
 	version  string
 }
 
-// installSpec pairs a tool spec with the source flag in effect for it (see
-// Install's positional scoping below); source is "" when no flag applied.
-type installSpec struct {
-	spec   string
-	source string
-}
-
 // Install installs one or more tools. A --flag (e.g. --flatpak) forces the
 // source for every spec that follows it, until the next flag switches to a
 // different source - so a single invocation can mix sources, e.g.
@@ -62,16 +35,7 @@ type installSpec struct {
 // suffix or the flag in scope), or the fallback chain configured in
 // ~/.config/sat/config.toml.
 func Install(args []string) error {
-	currentSource := ""
-	var specs []installSpec
-	for _, arg := range args {
-		if source, ok := installFlagSource[arg]; ok {
-			currentSource = source
-			continue
-		}
-		specs = append(specs, installSpec{spec: arg, source: currentSource})
-	}
-
+	specs := scopeSpecs(args)
 	if len(specs) == 0 {
 		return fmt.Errorf(installUsage)
 	}
@@ -220,8 +184,8 @@ func finishInstall(result installResult) {
 	}
 
 	sourceString := manifest.BuildSourceString(result.source, result.identity, result.version)
-	if err := manifest.Add(result.binName, sourceString); err != nil && os.Getenv(common.EnvSATDebug) != "" {
-		fmt.Fprintf(os.Stderr, "%s failed to record %s in manifest: %v\n", common.DebugPrefix, result.binName, err)
+	if err := manifest.Add(result.binName, sourceString); err != nil {
+		fmt.Fprintf(os.Stderr, "sat: warning: %s installed but failed to record in manifest: %v\n", result.binName, err)
 	}
 
 	ui.StatusOK(result.binName, sourceString)

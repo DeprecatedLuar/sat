@@ -56,12 +56,12 @@ func TestManifestOperations(t *testing.T) {
 	}
 
 	// Test Has
-	if !Has("ripgrep") {
+	if !Has("ripgrep", "cargo") {
 		t.Error("Has(ripgrep) = false, want true")
 	}
 
 	// Test Get
-	got := Get("ripgrep")
+	got := Get("ripgrep", "cargo")
 	want := "cargo::14.1.0"
 	if got != want {
 		t.Errorf("Get(ripgrep) = %q, want %q", got, want)
@@ -73,27 +73,27 @@ func TestManifestOperations(t *testing.T) {
 		t.Fatalf("Add(fd) error = %v", err)
 	}
 
-	if !Has("fd") {
+	if !Has("fd", "gh") {
 		t.Error("Has(fd) = false, want true")
 	}
 
 	// Test Remove
-	err = Remove("ripgrep")
+	err = Remove("ripgrep", "cargo")
 	if err != nil {
 		t.Fatalf("Remove() error = %v", err)
 	}
 
-	if Has("ripgrep") {
+	if Has("ripgrep", "cargo") {
 		t.Error("Has(ripgrep) after Remove = true, want false")
 	}
 
 	// fd should still exist
-	if !Has("fd") {
+	if !Has("fd", "gh") {
 		t.Error("Has(fd) after removing ripgrep = false, want true")
 	}
 
 	// Test removing non-existent tool (should not error)
-	err = Remove("nonexistent")
+	err = Remove("nonexistent", "cargo")
 	if err != nil {
 		t.Errorf("Remove(nonexistent) error = %v, want nil", err)
 	}
@@ -105,7 +105,7 @@ func TestGetNonExistent(t *testing.T) {
 	os.Setenv("SAT_DATA", tmpDir)
 	defer os.Setenv("SAT_DATA", origSatData)
 
-	got := Get("nonexistent")
+	got := Get("nonexistent", "cargo")
 	if got != "" {
 		t.Errorf("Get(nonexistent) = %q, want empty string", got)
 	}
@@ -129,9 +129,9 @@ func TestAddMany(t *testing.T) {
 
 	// Update fd in place, add a brand new tool, and leave ripgrep untouched
 	// by omitting it - AddMany must only touch what it's given.
-	changed, err := AddMany(map[string]string{
-		"fd":     "cargo::10.3.0",
-		"zoxide": "cargo::0.9.8",
+	changed, err := AddMany([]Entry{
+		{Tool: "fd", Source: "cargo::10.3.0"},
+		{Tool: "zoxide", Source: "cargo::0.9.8"},
 	})
 	if err != nil {
 		t.Fatalf("AddMany() error = %v", err)
@@ -182,7 +182,7 @@ func TestAddManyNoOpDoesNotWrite(t *testing.T) {
 	before := info.ModTime()
 
 	// Re-applying the exact same source should be a true no-op: no file write.
-	changed, err := AddMany(map[string]string{"ripgrep": "cargo::14.1.0"})
+	changed, err := AddMany([]Entry{{Tool: "ripgrep", Source: "cargo::14.1.0"}})
 	if err != nil {
 		t.Fatalf("AddMany() error = %v", err)
 	}
@@ -223,10 +223,10 @@ func TestWriteEntriesLeavesNoTempResidue(t *testing.T) {
 	if err := Add("ripgrep", "cargo::14.1.0"); err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
-	if _, err := AddMany(map[string]string{"fd": "cargo::10.3.0"}); err != nil {
+	if _, err := AddMany([]Entry{{Tool: "fd", Source: "cargo::10.3.0"}}); err != nil {
 		t.Fatalf("AddMany() error = %v", err)
 	}
-	if err := Remove("ripgrep"); err != nil {
+	if err := Remove("ripgrep", "cargo"); err != nil {
 		t.Fatalf("Remove() error = %v", err)
 	}
 
@@ -263,5 +263,117 @@ func TestStateDirRespectsSATData(t *testing.T) {
 	wantStamp := filepath.Join(want, DriftStampName)
 	if got := DriftStampPath(); got != wantStamp {
 		t.Errorf("DriftStampPath() = %q, want %q", got, wantStamp)
+	}
+}
+
+func withSatData(t *testing.T) {
+	t.Helper()
+	t.Setenv("SAT_DATA", t.TempDir())
+}
+
+func TestMultiSourceCoexist(t *testing.T) {
+	withSatData(t)
+
+	for _, src := range []string{"flatpak:com.x.Zap:1.0", "appimage:owner/zap:v1"} {
+		if err := Add("zapzap", src); err != nil {
+			t.Fatalf("Add(%s) error = %v", src, err)
+		}
+	}
+
+	got := Lookup("zapzap")
+	if len(got) != 2 {
+		t.Fatalf("Lookup len = %d, want 2: %+v", len(got), got)
+	}
+	if got[0].Source != "flatpak:com.x.Zap:1.0" || got[1].Source != "appimage:owner/zap:v1" {
+		t.Errorf("Lookup order/content wrong: %+v", got)
+	}
+}
+
+func TestAddUpdatesOnlyOwnSource(t *testing.T) {
+	withSatData(t)
+
+	Add("zapzap", "flatpak:com.x.Zap:1.0")
+	Add("zapzap", "appimage:owner/zap:v1")
+	if err := Add("zapzap", "appimage:owner/zap:v2"); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	if got := Get("zapzap", "appimage"); got != "appimage:owner/zap:v2" {
+		t.Errorf("appimage = %q, want v2", got)
+	}
+	if got := Get("zapzap", "flatpak"); got != "flatpak:com.x.Zap:1.0" {
+		t.Errorf("flatpak = %q, want unchanged", got)
+	}
+	if n := len(Lookup("zapzap")); n != 2 {
+		t.Errorf("Lookup len = %d, want 2", n)
+	}
+}
+
+func TestRemoveLeavesOtherSource(t *testing.T) {
+	withSatData(t)
+
+	Add("cowsay", "npm::1.0")
+	Add("cowsay", "uv::2.0")
+	if err := Remove("cowsay", "uv"); err != nil {
+		t.Fatalf("Remove() error = %v", err)
+	}
+
+	if Has("cowsay", "uv") {
+		t.Error("uv entry still present")
+	}
+	if !Has("cowsay", "npm") {
+		t.Error("npm entry was removed")
+	}
+}
+
+func TestAliasesMatchCanonical(t *testing.T) {
+	withSatData(t)
+
+	Add("ripgrep", "rust::14.0.0")
+	if !Has("ripgrep", "cargo") {
+		t.Error("rust-recorded entry should match cargo")
+	}
+	if err := Add("ripgrep", "cargo::14.1.0"); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if n := len(Lookup("ripgrep")); n != 1 {
+		t.Errorf("Lookup len = %d, want 1 (cargo replaces rust line)", n)
+	}
+
+	Add("curl", "apt::8.0")
+	if !Has("curl", "system") {
+		t.Error("apt-recorded entry should match system")
+	}
+
+	Add("hello", "nixos::")
+	if Has("hello", "nix") {
+		t.Error("nixos must stay distinct from nix")
+	}
+}
+
+func TestAddManyIsSourceScoped(t *testing.T) {
+	withSatData(t)
+
+	Add("cowsay", "npm::1.0")
+	Add("cowsay", "uv::1.0")
+
+	changed, err := AddMany([]Entry{
+		{Tool: "cowsay", Source: "uv::2.0"},
+		{Tool: "cowsay", Source: "cargo::3.0"},
+	})
+	if err != nil {
+		t.Fatalf("AddMany() error = %v", err)
+	}
+	if changed != 2 {
+		t.Errorf("changed = %d, want 2", changed)
+	}
+	if got := Get("cowsay", "npm"); got != "npm::1.0" {
+		t.Errorf("npm = %q, want unchanged", got)
+	}
+	if got := Get("cowsay", "uv"); got != "uv::2.0" {
+		t.Errorf("uv = %q, want uv::2.0", got)
+	}
+	if got := Get("cowsay", "cargo"); got != "cargo::3.0" {
+		t.Errorf("cargo = %q, want appended", got)
 	}
 }

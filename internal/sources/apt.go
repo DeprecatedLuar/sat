@@ -107,7 +107,7 @@ func aptPkgExists(pkg string) bool {
 // aptCheckOutdated checks if an apt package has updates available
 func aptCheckOutdated(tool string) (current, latest string, err error) {
 	// Try to get current version from manifest first
-	if sourceStr := manifest.Get(tool); sourceStr != "" {
+	if sourceStr := manifest.Get(tool, common.SourceSystem); sourceStr != "" {
 		current = manifest.GetSourceVersion(sourceStr)
 	}
 

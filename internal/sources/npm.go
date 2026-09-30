@@ -274,7 +274,7 @@ func NpmCheckOutdated(tool, identity string) (current, latest string, err error)
 	}
 
 	// Try manifest first, fall back to npm outdated
-	if sourceStr := manifest.Get(tool); sourceStr != "" {
+	if sourceStr := manifest.Get(tool, common.SourceNPM); sourceStr != "" {
 		current = manifest.GetSourceVersion(sourceStr)
 	}
 	if current == "" {
@@ -406,7 +406,7 @@ func NpmManifestIssues() ManifestIssues {
 
 		pkgName := ResolveNpmPackageName(e.Tool)
 		if seen[pkgName] {
-			issues.Prune = append(issues.Prune, PrunedEntry{Tool: e.Tool, Reason: "duplicate of another npm binary"})
+			issues.Prune = append(issues.Prune, PrunedEntry{Tool: e.Tool, SourceType: common.SourceNPM, Reason: "duplicate of another npm binary"})
 			continue
 		}
 		seen[pkgName] = true

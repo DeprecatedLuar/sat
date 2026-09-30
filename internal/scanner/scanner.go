@@ -82,13 +82,31 @@ func scanDir(source, dir string) int {
 	return added
 }
 
+// perSourceDedupe lists sources whose artifacts are owned by sat, so the
+// same name may legitimately be tracked from several of them at once. Every
+// other source can report one binary twice (system/nix/nixos/localbin/go), so
+// those dedupe by name.
+var perSourceDedupe = map[string]bool{
+	SourceFlatpak:  true,
+	SourceAppImage: true,
+}
+
+// alreadyTracked reports whether pkg is already in the manifest under the
+// identity its source dedupes by.
+func alreadyTracked(pkg sources.Package) bool {
+	if perSourceDedupe[pkg.Source] {
+		return manifest.Has(pkg.Name, pkg.Source)
+	}
+	return len(manifest.Lookup(pkg.Name)) > 0
+}
+
 // tryAddPackage attempts to add a package to the manifest
 func tryAddPackage(pkg sources.Package) bool {
 	// Skip if excluded or already tracked
 	if IsExcluded(pkg.Name, pkg.Source) {
 		return false
 	}
-	if manifest.Has(pkg.Name) {
+	if alreadyTracked(pkg) {
 		return false
 	}
 	// TODO: Check master manifest for shell sessions (Phase 12)
@@ -132,19 +150,27 @@ func CleanupManifest() (int, int) {
 	if err == nil {
 		for _, e := range entries {
 			if IsExcluded(e.Tool, manifest.GetSourceType(e.Source)) {
-				manifest.Remove(e.Tool)
+				if err := manifest.Remove(e.Tool, manifest.GetSourceType(e.Source)); err != nil {
+					ui.Warn(fmt.Sprintf("failed to prune %s: %v", e.Tool, err))
+					continue
+				}
 				fmt.Printf("  %s- %-20s (%s)%s\n", ui.Dim, e.Tool, ReasonExcluded, ui.Reset)
 				pruned++
 			}
 		}
 	}
 
+	p, r := ApplyExactIssues(sources.SnapshotFlatpak())
+	pruned += p
+	repaired += r
+
 	for _, issues := range []sources.ManifestIssues{
 		sources.BrewManifestIssues(),
 		sources.UnknownManifestIssues(),
 		sources.NpmManifestIssues(),
+		sources.StaleManifestIssues(),
 	} {
-		p, r := applyManifestIssues(issues)
+		p, r := ApplyManifestIssues(issues)
 		pruned += p
 		repaired += r
 	}
@@ -159,7 +185,7 @@ func CleanupManifest() (int, int) {
 
 // applyDrifts rewrites the manifest for every drift found in a single
 // batched write (drift.Apply), then prints each correction with the same
-// "~" marker applyManifestIssues uses for a repair.
+// "~" marker ApplyManifestIssues uses for a repair.
 func applyDrifts(drifts []drift.Drift) (repaired int) {
 	changed, err := drift.Apply(drifts)
 	if err != nil || changed == 0 {
@@ -173,17 +199,39 @@ func applyDrifts(drifts []drift.Drift) (repaired int) {
 	return changed
 }
 
-// applyManifestIssues mutates the manifest and prints per the staleness a
+// ApplyExactIssues applies the checks that need no $PATH and are cheap
+// enough for every invocation (appimage files, flatpak installs). The one
+// list shared by selfheal and scan.
+func ApplyExactIssues(flatpak sources.FlatpakSnapshot) (pruned, repaired int) {
+	for _, issues := range []sources.ManifestIssues{
+		sources.AppImageManifestIssues(),
+		sources.FlatpakManifestIssues(flatpak),
+	} {
+		p, r := ApplyManifestIssues(issues)
+		pruned += p
+		repaired += r
+	}
+	return
+}
+
+// ApplyManifestIssues mutates the manifest and prints per the staleness a
 // source module reported, without knowing anything about which source it
-// came from or why.
-func applyManifestIssues(issues sources.ManifestIssues) (pruned, repaired int) {
+// came from or why. Entries excluded by policy are never added.
+func ApplyManifestIssues(issues sources.ManifestIssues) (pruned, repaired int) {
 	for _, p := range issues.Prune {
-		manifest.Remove(p.Tool)
+		if err := manifest.Remove(p.Tool, p.SourceType); err != nil {
+			ui.Warn(fmt.Sprintf("failed to prune %s: %v", p.Tool, err))
+			continue
+		}
 		fmt.Printf("  %s- %-20s (%s)%s\n", ui.Dim, p.Tool, p.Reason, ui.Reset)
 		pruned++
 	}
 	for _, r := range issues.Repair {
+		if IsExcluded(r.Tool, manifest.GetSourceType(r.NewSource)) {
+			continue
+		}
 		if err := manifest.Add(r.Tool, r.NewSource); err != nil {
+			ui.Warn(fmt.Sprintf("failed to update %s: %v", r.Tool, err))
 			continue
 		}
 		repaired++
