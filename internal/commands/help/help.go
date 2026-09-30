@@ -43,7 +43,7 @@ func Run(args []string) {
 			gohelp.Item("untrack <program>[:src]", "Remove from manifest without uninstalling"),
 			gohelp.Item("scan", "Scan ecosystem dirs and add all found packages"),
 			gohelp.Item("pulverize", "Clear entire manifest (with confirmation)"),
-			gohelp.Item("outdated", "Show available updates for tracked packages"),
+			gohelp.Item("outdated [<program>] [--<source>]", "Show available updates for tracked packages (read-only)"),
 			gohelp.Item("pull", "Refresh sat library from GitHub"),
 			gohelp.Item("clone [--gh|--gl|--cb] <owner/repo> [dest]", "Clone a repo (GitHub by default)"),
 		).

@@ -100,7 +100,10 @@ func main() {
 			os.Exit(1)
 		}
 	case "outdated":
-		notImplemented("outdated")
+		if err := commands.HandleOutdated(commandArgs, version, githubRepo); err != nil {
+			fmt.Fprintf(os.Stderr, "sat: %v\n", err)
+			os.Exit(1)
+		}
 	case "update":
 		if err := commands.HandleUpdate(commandArgs, version, githubRepo); err != nil {
 			fmt.Fprintf(os.Stderr, "sat: %v\n", err)

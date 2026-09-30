@@ -22,6 +22,8 @@ const updateUsage = "usage: sat update [<tool> ...] [--cargo|--brew|--nix|--apt|
 // scan rather than read from manifest.All().
 const selfToolName = "sat"
 
+const upToDateMessage = "Everything up to date"
+
 // Source-type aliases recognized alongside their canonical common.Source*
 // constants (older manifests / scan output may still record these).
 const (
@@ -37,20 +39,32 @@ func HandleUpdate(args []string, version, repo string) error {
 		return HandleSelfUpdate(version, repo)
 	}
 
-	// Force a reconcile regardless of the TTL, so a tool updated outside
-	// sat since the last reconcile doesn't get reported as outdated (or
-	// pointlessly re-updated) against a stale recorded version. Silent -
-	// drift isn't user-actionable and this command already owns the
-	// terminal with spinners.
+	reconcileDrift()
+
+	tools, sourceFilter, skipConfirm, err := parseTargetArgs(args, updateUsage, true)
+	if err != nil {
+		return err
+	}
+
+	return updateOutdated(tools, sourceFilter, skipConfirm, version, repo)
+}
+
+// reconcileDrift forces a reconcile regardless of the TTL, so a tool updated
+// outside sat since the last reconcile isn't reported as outdated against a
+// stale recorded version. Silent unless debugging: drift isn't
+// user-actionable and these commands already own the terminal.
+func reconcileDrift() {
 	if _, err := drift.Reconcile(); err != nil && os.Getenv(common.EnvSATDebug) != "" {
 		fmt.Fprintf(os.Stderr, "%s drift reconcile: %v\n", common.DebugPrefix, err)
 	}
+}
 
-	var tools []string
-	var sourceFilter string
-	var skipConfirm bool
+// parseTargetArgs splits args into tool names, an optional source filter and
+// (when allowYes) the -y/--yes flag. Anything else starting with "-" is an
+// error reported with usage.
+func parseTargetArgs(args []string, usage string, allowYes bool) (tools []string, sourceFilter string, skipConfirm bool, err error) {
 	for _, arg := range args {
-		if arg == "-y" || arg == "--yes" {
+		if allowYes && (arg == "-y" || arg == "--yes") {
 			skipConfirm = true
 			continue
 		}
@@ -58,13 +72,12 @@ func HandleUpdate(args []string, version, repo string) error {
 			sourceFilter = sel.Type
 			continue
 		}
-		if strings.HasPrefix(arg, "--") || strings.HasPrefix(arg, "-") {
-			return fmt.Errorf("unknown flag: %s\n%s", arg, updateUsage)
+		if strings.HasPrefix(arg, "-") {
+			return nil, "", false, fmt.Errorf("unknown flag: %s\n%s", arg, usage)
 		}
 		tools = append(tools, arg)
 	}
-
-	return updateOutdated(tools, sourceFilter, skipConfirm, version, repo)
+	return tools, sourceFilter, skipConfirm, nil
 }
 
 // updateEntry updates one tracked entry via its recorded source, mirroring
@@ -267,21 +280,22 @@ func targetEntries(names []string, sourceFilter string) ([]manifest.Entry, error
 	return filtered, nil
 }
 
-// updateOutdated scans the targeted manifest entries for outdated tools, batched per source
-// type in parallel (mirrors search.go's searchAllSources concurrency
-// shape), prints what's outdated, and offers a single bulk confirmation
-// before updating everything shown. Each source-type group is checked
-// sequentially inside its own goroutine so a source with many tracked
-// tools (e.g. cargo hitting crates.io per package) doesn't burst a remote
-// registry with concurrent requests; only the source types run in parallel.
-func updateOutdated(names []string, sourceFilter string, skipConfirm bool, version, repo string) error {
+// scanOutdated checks the targeted manifest entries for newer versions,
+// batched per source type in parallel (mirrors search.go's searchAllSources
+// concurrency shape). Each source-type group is checked sequentially inside
+// its own goroutine so a source with many tracked tools (e.g. cargo hitting
+// crates.io per package) doesn't burst a remote registry with concurrent
+// requests; only the source types run in parallel. matched is false when
+// names were given and none resolved. The result is sorted and grouped for
+// display. Read-only.
+func scanOutdated(names []string, sourceFilter, version, repo string) (outdated []outdatedEntry, matched bool, err error) {
 	entries, err := targetEntries(names, sourceFilter)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
 	named := len(names) > 0
 	if named && len(entries) == 0 {
-		return nil
+		return nil, false, nil
 	}
 
 	grouped := make(map[string][]manifest.Entry)
@@ -300,7 +314,6 @@ func updateOutdated(names []string, sourceFilter string, skipConfirm bool, versi
 	}
 
 	var mu sync.Mutex
-	var outdated []outdatedEntry
 	var wg sync.WaitGroup
 
 	for _, group := range grouped {
@@ -349,11 +362,13 @@ func updateOutdated(names []string, sourceFilter string, skipConfirm bool, versi
 	}
 	wg.Wait()
 
-	if len(outdated) == 0 {
-		fmt.Println("Everything up to date")
-		return nil
-	}
+	return groupOutdated(outdated), true, nil
+}
 
+// groupOutdated sorts outdated and orders it by source group (largest group
+// first, mirroring list.go's displayGrouped), real apps before deps within a
+// group.
+func groupOutdated(outdated []outdatedEntry) []outdatedEntry {
 	sort.Slice(outdated, func(i, j int) bool {
 		if outdated[i].dep != outdated[j].dep {
 			return !outdated[i].dep // real apps before deps within a group
@@ -361,9 +376,6 @@ func updateOutdated(names []string, sourceFilter string, skipConfirm bool, versi
 		return outdated[i].tool < outdated[j].tool
 	})
 
-	// Group by source (largest group first, mirroring list.go's
-	// displayGrouped), rebuilding outdated in that order so the later
-	// apply loop walks the same grouped sequence it was confirmed in.
 	groups := make(map[string][]outdatedEntry)
 	var groupOrder []string
 	for _, o := range outdated {
@@ -377,16 +389,34 @@ func updateOutdated(names []string, sourceFilter string, skipConfirm bool, versi
 	for group, entries := range groups {
 		counts[group] = len(entries)
 	}
-	outdated = outdated[:0]
+	ordered := make([]outdatedEntry, 0, len(outdated))
 	for _, group := range ui.GroupedOrder(groupOrder, counts) {
-		outdated = append(outdated, groups[group]...)
+		ordered = append(ordered, groups[group]...)
 	}
+	return ordered
+}
 
+// printOutdated prints one "current -> latest" row per entry.
+func printOutdated(outdated []outdatedEntry) {
 	for _, o := range outdated {
 		color := ui.SourceColor(o.source)
 		fmt.Printf("  %-*s [%s%s%s] %s -> %s\n",
 			ui.ToolNameWidth, ui.TruncateName(o.tool, ui.ToolNameWidth), color, outdatedTag(o), ui.Reset, o.current, o.latest)
 	}
+}
+
+// updateOutdated scans for outdated tools, prints them, and offers a single
+// bulk confirmation before updating everything shown.
+func updateOutdated(names []string, sourceFilter string, skipConfirm bool, version, repo string) error {
+	outdated, matched, err := scanOutdated(names, sourceFilter, version, repo)
+	if err != nil || !matched {
+		return err
+	}
+	if len(outdated) == 0 {
+		fmt.Println(upToDateMessage)
+		return nil
+	}
+	printOutdated(outdated)
 
 	if skipConfirm {
 		fmt.Printf("\nUpdating all %d\n", len(outdated))
