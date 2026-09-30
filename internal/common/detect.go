@@ -105,6 +105,12 @@ func DetectSource(tool string) string {
 		realPath = binPath
 	}
 
+	return ClassifyPath(realPath)
+}
+
+// ClassifyPath maps a resolved binary path to the source type that owns it,
+// or "unknown" when no installation pattern matches.
+func ClassifyPath(realPath string) string {
 	// Match against common installation paths
 	switch {
 	case strings.Contains(realPath, PathCargo1),

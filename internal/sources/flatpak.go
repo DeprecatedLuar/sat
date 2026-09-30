@@ -735,3 +735,16 @@ func FlatpakLookup(name string) (LookupResult, error) {
 
 	return LookupResult{}, ErrNoMatch
 }
+
+// FlatpakWrapperAppID returns the app ID the wrapper script at path execs.
+func FlatpakWrapperAppID(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	m := flatpakWrapperAppIDRe.FindStringSubmatch(string(data))
+	if len(m) < 2 {
+		return "", fmt.Errorf("%s is not a flatpak wrapper", path)
+	}
+	return m[1], nil
+}

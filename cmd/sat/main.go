@@ -80,9 +80,15 @@ func main() {
 			os.Exit(1)
 		}
 	case "track":
-		notImplemented("track")
+		if err := commands.Track(commandArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "sat: track failed: %v\n", err)
+			os.Exit(1)
+		}
 	case "untrack":
-		notImplemented("untrack")
+		if err := commands.Untrack(commandArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "sat: untrack failed: %v\n", err)
+			os.Exit(1)
+		}
 	case "scan":
 		if err := commands.Scan(); err != nil {
 			fmt.Fprintf(os.Stderr, "sat: scan failed: %v\n", err)
@@ -101,7 +107,10 @@ func main() {
 			os.Exit(1)
 		}
 	case "info", "which", "whereis":
-		notImplemented("info")
+		if err := commands.Info(commandArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "sat: info failed: %v\n", err)
+			os.Exit(1)
+		}
 	case "clone":
 		if err := commands.Clone(commandArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "sat: clone failed: %v\n", err)
