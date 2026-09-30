@@ -13,75 +13,30 @@ import (
 
 const launcherTestAppID = "dev.test.App"
 
-func TestWrapperTemplateUsesLauncherHelper(t *testing.T) {
+func TestWrapperRegexExtractsAppID(t *testing.T) {
 	setupSourceBinEnv(t)
-	if err := ensureLauncherHelper(); err != nil {
+	script := fmt.Sprintf(flatpakWrapperScript, common.FlatpakLauncherPath(), launcherTestAppID)
+	m := flatpakWrapperAppIDRe.FindStringSubmatch(script)
+	if len(m) < 2 || m[1] != launcherTestAppID {
+		t.Fatalf("regex did not extract app ID from %q: %v", script, m)
+	}
+}
+
+func TestCreateWrapperUsesLauncherHelper(t *testing.T) {
+	setupSourceBinEnv(t)
+	if err := createFlatpakWrapper("app", launcherTestAppID); err != nil {
 		t.Fatal(err)
 	}
-	want := fmt.Sprintf("#!/usr/bin/env bash\nexec %s %s \"$@\"\n", common.FlatpakLauncherPath(), launcherTestAppID)
-	if got := renderWrapper(launcherTestAppID); got != want {
-		t.Fatalf("wrapper = %q, want %q", got, want)
-	}
-}
-
-func TestWrapperRegexMatchesOldAndNewForms(t *testing.T) {
-	setupSourceBinEnv(t)
-	forms := []string{
-		fmt.Sprintf(flatpakLegacyWrapperScript, launcherTestAppID),
-		fmt.Sprintf(flatpakWrapperScript, common.FlatpakLauncherPath(), launcherTestAppID),
-	}
-	for _, f := range forms {
-		m := flatpakWrapperAppIDRe.FindStringSubmatch(f)
-		if len(m) < 2 || m[1] != launcherTestAppID {
-			t.Fatalf("regex did not extract app ID from %q: %v", f, m)
-		}
-	}
-}
-
-func TestWrapperWithoutHelperFallsBackToDirectRun(t *testing.T) {
-	setupSourceBinEnv(t)
-	want := fmt.Sprintf(flatpakLegacyWrapperScript, launcherTestAppID)
-	if got := renderWrapper(launcherTestAppID); got != want {
-		t.Fatalf("wrapper = %q, want %q", got, want)
-	}
-}
-
-func TestReconcileRewritesOldWrapperInPlace(t *testing.T) {
-	setupSourceBinEnv(t)
-	const name = "app"
-	path := filepath.Join(common.FlatpakWrapperDir(), name)
-	old := fmt.Sprintf(flatpakLegacyWrapperScript, launcherTestAppID)
-	if err := os.WriteFile(path, []byte(old), 0755); err != nil {
-		t.Fatal(err)
-	}
-	linkName, err := common.LinkBin(path)
+	data, err := os.ReadFile(filepath.Join(common.FlatpakWrapperDir(), "app"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	link := filepath.Join(common.LocalBin(), linkName)
-	if err := ensureLauncherHelper(); err != nil {
-		t.Fatal(err)
+	want := fmt.Sprintf(flatpakWrapperScript, common.FlatpakLauncherPath(), launcherTestAppID)
+	if string(data) != want {
+		t.Fatalf("wrapper = %q, want %q", data, want)
 	}
-
-	if reconcileWrapper(launcherTestAppID, name) {
-		t.Fatal("reconcile reported a creation for an existing wrapper")
-	}
-	data, _ := os.ReadFile(path)
-	if string(data) != renderWrapper(launcherTestAppID) {
-		t.Fatalf("wrapper not rewritten: %q", data)
-	}
-	if target, err := os.Readlink(link); err != nil || target != path {
-		t.Fatalf("link changed: %q, %v", target, err)
-	}
-
-	past := time.Now().Add(-time.Hour)
-	if err := os.Chtimes(path, past, past); err != nil {
-		t.Fatal(err)
-	}
-	reconcileWrapper(launcherTestAppID, name)
-	info, _ := os.Stat(path)
-	if !info.ModTime().Equal(past) {
-		t.Fatal("second reconcile rewrote an up-to-date wrapper")
+	if _, err := os.Stat(common.FlatpakLauncherPath()); err != nil {
+		t.Fatalf("helper not written: %v", err)
 	}
 }
 
