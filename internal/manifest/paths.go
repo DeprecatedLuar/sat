@@ -18,6 +18,7 @@ const (
 	ManifestFileName = "manifest"
 	ShellDirName     = "shell"
 	BinDirName       = "bin"
+	LibDirName       = "lib"
 	AppImagesDirName = "appimages"
 	FlatpakDirName   = "flatpak"
 	SourcesDirName   = "sources"

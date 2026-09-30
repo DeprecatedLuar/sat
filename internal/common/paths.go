@@ -65,6 +65,16 @@ func FlatpakWrapperDir() string {
 	return filepath.Join(manifest.DataDir(), manifest.BinDirName, manifest.FlatpakDirName)
 }
 
+// FlatpakLauncherPath returns the shared flatpak launcher helper:
+// $SAT_DATA/lib/flatpak-launch. It lives outside FlatpakWrapperDir() because
+// every file in a bin-link owner dir is linked into LocalBin().
+func FlatpakLauncherPath() string {
+	return filepath.Join(manifest.DataDir(), manifest.LibDirName, FlatpakLauncherName)
+}
+
+// FlatpakLauncherName is the launcher helper's file name.
+const FlatpakLauncherName = "flatpak-launch"
+
 // SourcesBinDir returns the directory where sat stores package-manager
 // binaries bootstrapped via `sat source`: $SAT_DATA/bin/sources. The
 // binary is moved here and symlinked back into its original location

@@ -14,13 +14,60 @@ import (
 	"github.com/DeprecatedLuar/sat/internal/manifest"
 )
 
-// flatpakWrapperScript is the template for a flatpak launcher wrapper,
-// mirroring bash's create_flatpak_wrapper (lib/sources/flatpak.sh).
-const flatpakWrapperScript = "#!/usr/bin/env bash\nexec flatpak run %s \"$@\"\n"
+// flatpakLegacyWrapperScript launches the app directly. Used only when the
+// launcher helper cannot be written.
+const flatpakLegacyWrapperScript = "#!/usr/bin/env bash\nexec flatpak run %s \"$@\"\n"
+
+// flatpakWrapperScript is the template for a flatpak launcher wrapper: it
+// hands the app ID and arguments to the shared launcher helper (first %s is
+// the helper path, second the app ID).
+const flatpakWrapperScript = "#!/usr/bin/env bash\nexec %s %s \"$@\"\n"
 
 // flatpakWrapperAppIDRe extracts the app_id a wrapper script execs, so
 // callers can find "the wrapper for this app_id" without recomputing its name.
-var flatpakWrapperAppIDRe = regexp.MustCompile(`exec flatpak run (\S+)`)
+// Matches both the direct `flatpak run` form and the launcher helper form.
+var flatpakWrapperAppIDRe = regexp.MustCompile(`exec (?:flatpak run|\S+/` + common.FlatpakLauncherName + `) (\S+)`)
+
+// flatpakLauncherScript raises an already-running app instead of starting a
+// second sandbox. With arguments, or when the app is not running, it runs
+// the app. Otherwise it tries D-Bus activation, then the app's
+// StatusNotifierItem (matched by the app ID in the owning sandbox's
+// .flatpak-info), and finally falls back to `flatpak run`.
+const flatpakLauncherScript = `#!/usr/bin/env bash
+app="$1"; shift
+
+is_running() {
+    flatpak ps --columns=application | grep -qxF "$app"
+}
+
+dbus_activate() {
+    busctl --user call "$app" "/${app//./\/}" org.freedesktop.Application Activate 'a{sv}' 0 2>/dev/null
+}
+
+tray_activate() {
+    local items item bus path pid
+    items=$(busctl --user get-property org.kde.StatusNotifierWatcher /StatusNotifierWatcher \
+        org.kde.StatusNotifierWatcher RegisteredStatusNotifierItems 2>/dev/null) || return 1
+    for item in $(echo "$items" | cut -d' ' -f3- | tr -d '"'); do
+        bus=${item%%/*}
+        path=/${item#*/}
+        pid=$(busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus \
+            GetConnectionUnixProcessID s "$bus" 2>/dev/null | cut -d' ' -f2) || continue
+        grep -qx "name=$app" "/proc/$pid/root/.flatpak-info" 2>/dev/null || continue
+        busctl --user call "$bus" "$path" org.kde.StatusNotifierItem Activate ii 0 0 2>/dev/null && return 0
+    done
+    return 1
+}
+
+if [[ $# -eq 0 ]] && is_running; then
+    dbus_activate && exit 0
+    tray_activate && exit 0
+fi
+exec flatpak run "$app" "$@"
+`
+
+// flatpakLauncherMode is the helper's file mode.
+const flatpakLauncherMode = 0755
 
 // flatpakMaxSearchResults caps how many flatpak search results are returned.
 const flatpakMaxSearchResults = 5
@@ -101,9 +148,12 @@ func createFlatpakWrapper(name, appID string) error {
 		return fmt.Errorf("failed to create flatpak wrapper directory: %w", err)
 	}
 
+	if err := ensureLauncherHelper(); err != nil {
+		warnWrapperFailure(appID, err)
+	}
+
 	scriptPath := filepath.Join(dir, name)
-	script := fmt.Sprintf(flatpakWrapperScript, appID)
-	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+	if err := os.WriteFile(scriptPath, []byte(renderWrapper(appID)), 0755); err != nil {
 		return fmt.Errorf("failed to write flatpak wrapper: %w", err)
 	}
 
@@ -112,6 +162,36 @@ func createFlatpakWrapper(name, appID string) error {
 	}
 
 	return nil
+}
+
+// ensureLauncherHelper writes the launcher helper when it is missing or its
+// content differs from flatpakLauncherScript.
+func ensureLauncherHelper() error {
+	path := common.FlatpakLauncherPath()
+	data, err := os.ReadFile(path)
+	if err == nil && string(data) == flatpakLauncherScript {
+		return nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read flatpak launcher helper: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("failed to create flatpak launcher helper directory: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(flatpakLauncherScript), flatpakLauncherMode); err != nil {
+		return fmt.Errorf("failed to write flatpak launcher helper: %w", err)
+	}
+	return os.Chmod(path, flatpakLauncherMode)
+}
+
+// renderWrapper returns the wrapper script for appID: through the launcher
+// helper when it exists, direct `flatpak run` otherwise.
+func renderWrapper(appID string) string {
+	helper := common.FlatpakLauncherPath()
+	if _, err := os.Stat(helper); err != nil {
+		return fmt.Sprintf(flatpakLegacyWrapperScript, appID)
+	}
+	return fmt.Sprintf(flatpakWrapperScript, helper, appID)
 }
 
 // removeFlatpakWrapper deletes a launcher wrapper's script and its symlink.
@@ -239,6 +319,10 @@ func ReconcileWrappers(snap FlatpakSnapshot) (created, pruned int) {
 		return 0, 0
 	}
 
+	if err := ensureLauncherHelper(); err != nil {
+		fmt.Fprintf(os.Stderr, "sat: warning: %v\n", err)
+	}
+
 	installed := snap.Installed
 	displayNames := FlatpakDisplayNames()
 
@@ -282,8 +366,9 @@ func ReconcileWrappers(snap FlatpakSnapshot) (created, pruned int) {
 }
 
 // reconcileWrapper creates the wrapper for one installed, tracked app if it
-// has none, or renames one stored under a different name, returning true if
-// one was created. Link naming is owned by common.ReconcileBinLinks.
+// has none, renames one stored under a different name, and rewrites one whose
+// content differs from the current template, returning true if one was
+// created. Link naming is owned by common.ReconcileBinLinks.
 func reconcileWrapper(appID, name string) (created bool) {
 	current, ok := findWrapperForAppID(appID)
 	if !ok {
@@ -296,9 +381,29 @@ func reconcileWrapper(appID, name string) (created bool) {
 	if current != name {
 		if err := renameFlatpakWrapper(current, name); err != nil {
 			warnWrapperFailure(appID, err)
+		} else {
+			current = name
 		}
 	}
+	if err := refreshWrapper(current, appID); err != nil {
+		warnWrapperFailure(appID, err)
+	}
 	return false
+}
+
+// refreshWrapper rewrites the wrapper in place when its content differs from
+// the rendered template; the name and link are untouched.
+func refreshWrapper(name, appID string) error {
+	path := filepath.Join(common.FlatpakWrapperDir(), name)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	want := renderWrapper(appID)
+	if string(data) == want {
+		return nil
+	}
+	return os.WriteFile(path, []byte(want), 0755)
 }
 
 // renameFlatpakWrapper moves a wrapper to a new name and drops the links to
