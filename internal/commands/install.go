@@ -95,7 +95,9 @@ func installDirectRepo(repoPath string) {
 	})
 
 	if err != nil {
-		ui.StatusError(repoName, common.SourceGH, "not found")
+		if !reportIfAmbiguous(err) {
+			ui.StatusError(repoName, common.SourceGH, err.Error())
+		}
 		return
 	}
 
@@ -122,14 +124,20 @@ func installForced(tool, source string) {
 }
 
 // reportIfAmbiguous prints and reports whether err is an
-// AmbiguousMatchError - a short tool name matching more than one GitHub
-// repository. This is not a "try the next source" failure: the ambiguity
+// AmbiguousMatchError (a short tool name matching more than one GitHub
+// repository) or an AmbiguousGoPackageError (a module with several
+// unrelated main packages). This is not a "try the next source" failure: the ambiguity
 // is independent of which source was being tried, so callers should stop
 // the whole install attempt for this spec instead of falling back.
 func reportIfAmbiguous(err error) bool {
 	var ambig *sources.AmbiguousMatchError
 	if errors.As(err, &ambig) {
 		ui.StatusFail(ambig.Error())
+		return true
+	}
+	var ambigGo *sources.AmbiguousGoPackageError
+	if errors.As(err, &ambigGo) {
+		ui.StatusFail(ambigGo.Error())
 		return true
 	}
 	return false
@@ -246,7 +254,17 @@ func trySource(tool, source string) (installResult, error) {
 		}
 		return installResult{binName: tool, source: source, version: sources.UvGetVersion(tool)}, nil
 
-	case common.SourceGo, common.SourceSat:
+	case common.SourceGo:
+		if !strings.Contains(tool, "/") {
+			return installResult{}, fmt.Errorf("go install needs owner/repo or a module path, got %q", tool)
+		}
+		binName, pkgPath, err := sources.GoInstall(tool)
+		if err != nil {
+			return installResult{}, err
+		}
+		return installResult{binName: binName, source: source, identity: pkgPath, version: sources.GoGetVersion(binName)}, nil
+
+	case common.SourceSat:
 		return installResult{}, fmt.Errorf("%s install not yet implemented in the Go port", ui.SourceDisplay(source))
 
 	default:
@@ -273,6 +291,8 @@ func installFromGitHub(tool, method string) (installResult, error) {
 		version = sources.GitHubGetVersion(identity)
 	case common.SourceAppImage:
 		version = sources.AppImageGetVersion(identity)
+	case common.SourceGo:
+		version = sources.GoGetVersion(bin)
 	}
 
 	return installResult{binName: bin, source: sourceType, identity: identity, version: version}, nil

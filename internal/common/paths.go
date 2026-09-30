@@ -2,7 +2,9 @@ package common
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/DeprecatedLuar/sat/internal/manifest"
 )
@@ -79,4 +81,33 @@ const HuberBinSubpath = ".huber/bin"
 func HuberBinDir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, HuberBinSubpath)
+}
+
+const (
+	// GoTool is the go toolchain executable name.
+	GoTool = "go"
+
+	// BinSubdir is the bin directory under a GOPATH.
+	BinSubdir = "bin"
+)
+
+// GoBinDir returns $GOPATH/bin, or "" when go is missing or reports no GOPATH.
+func GoBinDir() string {
+	if _, err := exec.LookPath(GoTool); err != nil {
+		return ""
+	}
+
+	var output strings.Builder
+	cmd := exec.Command(GoTool, "env", "GOPATH")
+	cmd.Stdout = &output
+	if cmd.Run() != nil {
+		return ""
+	}
+
+	gopath := strings.TrimSpace(output.String())
+	if gopath == "" {
+		return ""
+	}
+
+	return filepath.Join(gopath, BinSubdir)
 }

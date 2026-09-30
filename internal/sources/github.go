@@ -2,6 +2,7 @@ package sources
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -63,10 +64,9 @@ func GitHubInstall(input, method string) (binName, srcString string, err error) 
 	}
 }
 
-// githubInstallAuto tries every install method in order and, if all fail,
-// returns one concise reason instead of whichever method happened to run
-// last (which could be a confusing non-sequitur, e.g. "not a python
-// project" for a plain C repo).
+// githubInstallAuto tries every install method in order. When a
+// language-routed method ran and failed, its own error is returned, since it
+// explains the failure better than a generic "nothing worked".
 func githubInstallAuto(repo, lang string, tree []string) (binName, srcString string, err error) {
 	if bin, src, err := github.InstallHuber(repo); err == nil {
 		return bin, src, nil
@@ -78,23 +78,33 @@ func githubInstallAuto(repo, lang string, tree []string) (binName, srcString str
 
 	switch lang {
 	case "Go":
-		if bin, src, err := github.InstallGo(repo, tree); err == nil {
-			return bin, src, nil
-		}
+		return githubInstallGo(repo)
 	case "Python":
-		if bin, src, err := github.InstallPython(repo, tree); err == nil {
-			return bin, src, nil
-		}
-	default:
-		if bin, src, err := github.InstallGo(repo, tree); err == nil {
-			return bin, src, nil
-		}
-		if bin, src, err := github.InstallPython(repo, tree); err == nil {
-			return bin, src, nil
-		}
+		return github.InstallPython(repo, tree)
 	}
 
-	return "", "", fmt.Errorf("no binary, AppImage, Go, or Python entrypoint for %s", repo)
+	bin, src, goErr := githubInstallGo(repo)
+	if goErr == nil {
+		return bin, src, nil
+	}
+	if !errors.Is(goErr, ErrNotGoProject) && !errors.Is(goErr, ErrGoNotInstalled) {
+		return "", "", goErr
+	}
+	bin, src, pyErr := github.InstallPython(repo, tree)
+	if pyErr != nil {
+		return "", "", fmt.Errorf("no binary, AppImage, Go, or Python entrypoint for %s (go: %v; python: %v)", repo, goErr, pyErr)
+	}
+	return bin, src, nil
+}
+
+// githubInstallGo installs repo via GoInstall and returns the manifest
+// source string for the result.
+func githubInstallGo(repo string) (binName, srcString string, err error) {
+	bin, pkgPath, err := GoInstall(repo)
+	if err != nil {
+		return "", "", err
+	}
+	return bin, common.SourceGo + manifest.SourceDelimiter + pkgPath, nil
 }
 
 // GitHubSearch searches GitHub repositories, formatted for display.

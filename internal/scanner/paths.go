@@ -2,41 +2,9 @@ package scanner
 
 import (
 	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 
 	"github.com/DeprecatedLuar/sat/internal/common"
 )
-
-const (
-	// Subdirectories
-	BinSubdir = "bin"
-
-	// Tool names
-	GoTool = "go"
-)
-
-// GoBinDir returns the go bin directory
-func GoBinDir() string {
-	if _, err := exec.LookPath(GoTool); err != nil {
-		return ""
-	}
-
-	var output strings.Builder
-	cmd := exec.Command(GoTool, "env", "GOPATH")
-	cmd.Stdout = &output
-	if cmd.Run() != nil {
-		return ""
-	}
-
-	gopath := strings.TrimSpace(output.String())
-	if gopath == "" {
-		return ""
-	}
-
-	return filepath.Join(gopath, BinSubdir)
-}
 
 // appImagesDir returns the AppImage storage directory
 func appImagesDir() string {

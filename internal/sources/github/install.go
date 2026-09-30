@@ -5,16 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/DeprecatedLuar/sat/internal/common"
 )
-
-// goCmdMainRe matches "cmd/<name>/main.go" tree paths, mirroring bash's
-// `grep -oP '^cmd/\K[^/]+(?=/main\.go$)'` (lib/sources/github.sh:284).
-var goCmdMainRe = regexp.MustCompile(`^cmd/([^/]+)/main\.go$`)
 
 // repoBaseName extracts the repo part of an "owner/repo" string.
 func repoBaseName(repoPath string) string {
@@ -97,54 +92,6 @@ func InstallHuber(repoPath string) (binName, srcString string, err error) {
 	}
 
 	return filepath.Base(huberBin), "gh:" + repoPath, nil
-}
-
-// InstallGo builds repoPath from source via "go install", mirroring bash's
-// _install_go (lib/sources/github.sh:274). Requires a go.mod in the repo
-// tree; prefers a cmd/<name>/main.go entrypoint, falling back to
-// <repo>/main.go or a root main.go.
-func InstallGo(repoPath string, tree []string) (binName, srcString string, err error) {
-	if _, err := exec.LookPath("go"); err != nil {
-		return "", "", fmt.Errorf("go not installed")
-	}
-	if !containsPath(tree, "go.mod") {
-		return "", "", fmt.Errorf("no go.mod found in %s", repoPath)
-	}
-
-	repoName := repoBaseName(repoPath)
-	var goBin, goSubdir string
-
-	for _, p := range tree {
-		if m := goCmdMainRe.FindStringSubmatch(p); m != nil {
-			goBin = m[1]
-			goSubdir = "cmd"
-			break
-		}
-	}
-	if goBin == "" && containsPath(tree, repoName+"/main.go") {
-		goBin = repoName
-	}
-
-	var goPath string
-	switch {
-	case goBin != "" && goSubdir != "":
-		goPath = fmt.Sprintf("github.com/%s/%s/%s@latest", repoPath, goSubdir, goBin)
-	case goBin != "":
-		goPath = fmt.Sprintf("github.com/%s/%s@latest", repoPath, goBin)
-	case containsPath(tree, "main.go"):
-		goPath = fmt.Sprintf("github.com/%s@latest", repoPath)
-	default:
-		return "", "", fmt.Errorf("no installable go entrypoint found in %s", repoPath)
-	}
-
-	if err := common.RunQuiet("go", "install", goPath); err != nil {
-		return "", "", fmt.Errorf("go install failed: %w", err)
-	}
-
-	if goBin == "" {
-		goBin = repoName
-	}
-	return goBin, "go:github.com/" + repoPath, nil
 }
 
 // InstallPython installs repoPath from source via "uv tool install",

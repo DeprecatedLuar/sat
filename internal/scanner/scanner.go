@@ -3,6 +3,7 @@ package scanner
 import (
 	"fmt"
 
+	"github.com/DeprecatedLuar/sat/internal/common"
 	"github.com/DeprecatedLuar/sat/internal/drift"
 	"github.com/DeprecatedLuar/sat/internal/manifest"
 	"github.com/DeprecatedLuar/sat/internal/sources"
@@ -34,7 +35,7 @@ func ScanAll() (*ScanResult, error) {
 	result.Added += scanSource(sources.UvScan)
 
 	// Legacy directory scans for sources not yet modularized
-	result.Added += scanDir("go", GoBinDir())
+	result.Added += scanDir("go", common.GoBinDir())
 
 	// Special ecosystem scans
 	result.Added += scanSource(ScanFlatpak)

@@ -151,7 +151,10 @@ func updateViaSource(tool, sourceStr string) (newVersion string, err error) {
 		}
 		return sources.UvGetVersion(tool), nil
 	case common.SourceGo:
-		return "", fmt.Errorf("%s update not yet implemented in the Go port", ui.SourceDisplay(sourceStr))
+		if err := sources.GoUpdate(tool, identity); err != nil {
+			return "", err
+		}
+		return sources.GoGetVersion(tool), nil
 	default:
 		return "", fmt.Errorf("no automated update for source %q", sourceType)
 	}
